@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,11 +17,10 @@ package utils
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 
 	"github.com/goharbor/harbor/src/common/api"
-	"github.com/goharbor/harbor/src/common/utils/log"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // ResponseHandler provides utility to handle http response.
@@ -38,11 +37,11 @@ type StatusRespHandler struct {
 func (s StatusRespHandler) Handle(resp *http.Response) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != s.status {
-		b, err := ioutil.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}
-		return fmt.Errorf("Unexpected status code: %d, text: %s", resp.StatusCode, string(b))
+		return fmt.Errorf("unexpected status code: %d, text: %s", resp.StatusCode, string(b))
 	}
 	return nil
 }
@@ -63,8 +62,8 @@ type JobLogRespHandler struct {
 func (h JobLogRespHandler) Handle(resp *http.Response) error {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusOK {
-		h.theAPI.Ctx.ResponseWriter.Header().Set(http.CanonicalHeaderKey("Content-Length"), resp.Header.Get(http.CanonicalHeaderKey("Content-Length")))
-		h.theAPI.Ctx.ResponseWriter.Header().Set(http.CanonicalHeaderKey("Content-Type"), "text/plain")
+		h.theAPI.Ctx.ResponseWriter.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
+		h.theAPI.Ctx.ResponseWriter.Header().Set("Content-Type", "text/plain")
 
 		if _, err := io.Copy(h.theAPI.Ctx.ResponseWriter, resp.Body); err != nil {
 			log.Errorf("failed to write log to response; %v", err)
@@ -73,7 +72,7 @@ func (h JobLogRespHandler) Handle(resp *http.Response) error {
 		return nil
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Errorf("failed to read response body: %v", err)
 		return err

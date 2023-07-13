@@ -15,10 +15,15 @@
 package config
 
 import (
-	"io/ioutil"
+	"fmt"
 	"os"
 
+	"github.com/docker/distribution/configuration"
+	storagedriver "github.com/docker/distribution/registry/storage/driver"
+	"github.com/docker/distribution/registry/storage/driver/factory"
 	yaml "gopkg.in/yaml.v2"
+
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // DefaultConfig ...
@@ -33,13 +38,15 @@ type Configuration struct {
 		Cert string `yaml:"cert"`
 		Key  string `yaml:"key"`
 	} `yaml:"https_config,omitempty"`
+	RegistryConfig string                      `yaml:"registry_config"`
+	StorageDriver  storagedriver.StorageDriver `yaml:"-"`
 }
 
 // Load the configuration options from the specified yaml file.
 func (c *Configuration) Load(yamlFilePath string, detectEnv bool) error {
 	if len(yamlFilePath) != 0 {
 		// Try to load from file first
-		data, err := ioutil.ReadFile(yamlFilePath)
+		data, err := os.ReadFile(yamlFilePath)
 		if err != nil {
 			return err
 		}
@@ -52,6 +59,30 @@ func (c *Configuration) Load(yamlFilePath string, detectEnv bool) error {
 		c.loadEnvs()
 	}
 
+	if err := c.setStorageDriver(); err != nil {
+		log.Errorf("failed to load storage driver, err:%v", err)
+		return err
+	}
+
+	return nil
+}
+
+// setStorageDriver set the storage driver according the registry's configuration.
+func (c *Configuration) setStorageDriver() error {
+	fp, err := os.Open(c.RegistryConfig)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+	rConf, err := configuration.Parse(fp)
+	if err != nil {
+		return fmt.Errorf("error parsing registry configuration %s: %v", c.RegistryConfig, err)
+	}
+	storageDriver, err := factory.Create(rConf.Storage.Type(), rConf.Storage.Parameters())
+	if err != nil {
+		return err
+	}
+	c.StorageDriver = storageDriver
 	return nil
 }
 
@@ -100,4 +131,8 @@ func (c *Configuration) loadEnvs() {
 		c.LogLevel = loggerLevel
 	}
 
+	registryConf := os.Getenv("REGISTRY_CONFIG")
+	if len(registryConf) != 0 {
+		c.RegistryConfig = registryConf
+	}
 }

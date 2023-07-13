@@ -18,6 +18,11 @@ Documentation  This resource provides any keywords related to the Harbor private
 *** Variables ***
 ${first_repo_xpath}  //clr-dg-row//clr-dg-cell[1]//a
 ${first_cve_xpath}  //clr-dg-row[1]//clr-dg-cell//a
-${view_log_xpath}  //clr-dg-row[1]//clr-dg-cell[4]//a
+${view_log_xpath}  //clr-dg-row//clr-dg-cell//a[contains(.,'View Log')]
 ${build_history_btn}  //button[contains(.,'Build History')]
 ${build_history_data}  //clr-dg-row
+${push_image_command_btn}  //hbr-push-image-button//button
+${scan_artifact_btn}  //button[@id='scan-btn']
+${stop_scan_artifact_btn}  //button[@id='stop-scan']
+${stopped_label}  //span[@class='label stopped']
+${refresh_repositories_xpath}  //hbr-repository-gridview//span[contains(@class,'refresh-btn')]

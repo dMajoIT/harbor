@@ -15,24 +15,18 @@
 package hook
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
 	"time"
 
-	"context"
-	"github.com/goharbor/harbor/src/jobservice/common/utils"
-)
-
-const (
-	proxyEnvHTTP  = "http_proxy"
-	proxyEnvHTTPS = "https_proxy"
+	commonhttp "github.com/goharbor/harbor/src/common/http"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // Client for handling the hook events
@@ -60,23 +54,18 @@ func NewClient(ctx context.Context) Client {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		Proxy:                 http.ProxyFromEnvironment,
 	}
-
-	// Get the http/https proxies
-	proxyAddr, ok := os.LookupEnv(proxyEnvHTTP)
-	if !ok {
-		proxyAddr, ok = os.LookupEnv(proxyEnvHTTPS)
-	}
-
-	if ok && !utils.IsEmptyStr(proxyAddr) {
-		proxyURL, err := url.Parse(proxyAddr)
-		if err == nil {
-			transport.Proxy = http.ProxyURL(proxyURL)
+	if commonhttp.InternalEnableVerifyClientCert() {
+		tlsConfig, err := commonhttp.GetInternalTLSConfig()
+		if err != nil {
+			log.Errorf("client load cert file with err: %v", err)
 		}
+		transport.TLSClientConfig = tlsConfig
 	}
 
 	client := &http.Client{
-		Timeout:   15 * time.Second,
+		Timeout:   30 * time.Second,
 		Transport: transport,
 	}
 
@@ -122,7 +111,7 @@ func (bc *basicClient) SendEvent(evt *Event) error {
 	if res.StatusCode != http.StatusOK {
 		if res.ContentLength > 0 {
 			// read error content and return
-			dt, err := ioutil.ReadAll(res.Body)
+			dt, err := io.ReadAll(res.Body)
 			if err != nil {
 				return err
 			}

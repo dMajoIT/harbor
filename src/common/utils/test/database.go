@@ -21,8 +21,9 @@ import (
 
 	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/common/utils"
-	"github.com/goharbor/harbor/src/common/utils/log"
+	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/lib/orm"
+	pkguser "github.com/goharbor/harbor/src/pkg/user"
 )
 
 // InitDatabaseFromEnv is used to initialize database for testing
@@ -64,32 +65,28 @@ func InitDatabaseFromEnv() {
 
 	log.Infof("POSTGRES_HOST: %s, POSTGRES_USR: %s, POSTGRES_PORT: %d, POSTGRES_PWD: %s\n", dbHost, dbUser, dbPort, dbPassword)
 
-	if err := dao.InitAndUpgradeDatabase(database); err != nil {
-		log.Fatalf("failed to init and upgrade database : %v", err)
+	if err := dao.InitDatabase(database); err != nil {
+		log.Fatalf("failed to init database : %v", err)
+	}
+	if err := dao.UpgradeSchema(database); err != nil {
+		log.Fatalf("failed to upgrade database : %v", err)
 	}
 	if err := updateUserInitialPassword(1, adminPwd); err != nil {
 		log.Fatalf("failed to init password for admin: %v", err)
 	}
-
 }
 
 func updateUserInitialPassword(userID int, password string) error {
-	queryUser := models.User{UserID: userID}
-	user, err := dao.GetUser(queryUser)
+	ctx := orm.Context()
+	user, err := pkguser.Mgr.Get(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("Failed to get user, userID: %d %v", userID, err)
-	}
-	if user == nil {
-		return fmt.Errorf("user id: %d does not exist", userID)
+		return fmt.Errorf("failed to get user, userID: %d %v", userID, err)
 	}
 	if user.Salt == "" {
-		user.Salt = utils.GenerateRandomString()
-		user.Password = password
-		err = dao.ChangeUserPassword(*user)
+		err = pkguser.Mgr.UpdatePassword(ctx, userID, password)
 		if err != nil {
-			return fmt.Errorf("Failed to update user encrypted password, userID: %d, err: %v", userID, err)
+			return fmt.Errorf("failed to update user encrypted password, userID: %d, err: %v", userID, err)
 		}
-	} else {
 	}
 	return nil
 }

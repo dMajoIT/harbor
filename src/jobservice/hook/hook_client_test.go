@@ -17,14 +17,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/jobservice/job"
 )
 
 // HookClientTestSuite tests functions of hook client
@@ -39,7 +41,7 @@ type HookClientTestSuite struct {
 func (suite *HookClientTestSuite) SetupSuite() {
 	suite.client = NewClient(context.Background())
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bytes, err := ioutil.ReadAll(r.Body)
+		bytes, err := io.ReadAll(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -57,7 +59,7 @@ func (suite *HookClientTestSuite) SetupSuite() {
 			return
 		}
 
-		fmt.Fprintln(w, "ok")
+		_, _ = fmt.Fprintln(w, "ok")
 	}))
 }
 

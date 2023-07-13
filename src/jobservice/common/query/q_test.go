@@ -1,10 +1,11 @@
 package query
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -26,4 +27,13 @@ func (suite *QueryTestSuite) TestExtraParams() {
 
 	assert.Equal(suite.T(), true, ok)
 	assert.Equal(suite.T(), 100, v.(int))
+
+	str := extras.String()
+	copy := make(ExtraParameters)
+	err := json.Unmarshal([]byte(str), &copy)
+	require.NoError(suite.T(), err)
+
+	v, ok = copy.Get("a")
+	assert.Equal(suite.T(), true, ok)
+	assert.Equal(suite.T(), 100, int(v.(float64)))
 }

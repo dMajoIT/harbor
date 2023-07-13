@@ -17,13 +17,21 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/goharbor/harbor/src/registryctl/api"
 	"github.com/gorilla/mux"
+
+	"github.com/goharbor/harbor/src/registryctl/api"
+	"github.com/goharbor/harbor/src/registryctl/api/registry/blob"
+	"github.com/goharbor/harbor/src/registryctl/api/registry/manifest"
+	"github.com/goharbor/harbor/src/registryctl/config"
 )
 
-func newRouter() http.Handler {
-	r := mux.NewRouter()
-	r.HandleFunc("/api/registry/gc", api.StartGC).Methods("POST")
-	r.HandleFunc("/api/health", api.Health).Methods("GET")
-	return r
+func newRouter(conf config.Configuration) http.Handler {
+	// create the root rooter
+	rootRouter := mux.NewRouter()
+	rootRouter.StrictSlash(true)
+	rootRouter.HandleFunc("/api/health", api.Health).Methods("GET")
+
+	rootRouter.Path("/api/registry/blob/{reference}").Methods(http.MethodDelete).Handler(blob.NewHandler(conf.StorageDriver))
+	rootRouter.Path("/api/registry/{name:.*}/manifests/{reference}").Methods(http.MethodDelete).Handler(manifest.NewHandler(conf.StorageDriver))
+	return rootRouter
 }

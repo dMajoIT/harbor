@@ -1,31 +1,21 @@
 from __future__ import absolute_import
 import unittest
 
-from testutils import ADMIN_CLIENT
+from testutils import ADMIN_CLIENT, suppress_urllib3_warning
 from testutils import TEARDOWN
 from library.project import Project
 from library.user import User
 from library.configurations import Configurations
 
 class TestProjects(unittest.TestCase):
-    @classmethod
+    @suppress_urllib3_warning
     def setUp(self):
-        conf = Configurations()
-        self.conf= conf
-
-        project = Project()
-        self.project= project
-
-        user = User()
-        self.user= user
-
-    @classmethod
-    def tearDown(self):
-        print "Case completed"
+        self.conf= Configurations()
+        self.project= Project()
+        self.user= User()
 
     @unittest.skipIf(TEARDOWN == False, "Test data won't be erased.")
-    def test_ClearData(self):
-        print "Clear trace"
+    def tearDown(self):
         #1. Delete project(PA);
         self.project.delete_project(TestProjects.project_edit_project_creation_id, **TestProjects.USER_edit_project_creation_CLIENT)
 
@@ -59,7 +49,7 @@ class TestProjects(unittest.TestCase):
 
         #3. Create a new project(PA) by user(UA), and fail to create a new project;
         self.project.create_project(metadata = {"public": "false"}, expect_status_code = 403,
-            expect_response_body = "{\"code\":403,\"message\":\"Only system admin can create project\"}", **TestProjects.USER_edit_project_creation_CLIENT)
+            expect_response_body = "{\"errors\":[{\"code\":\"FORBIDDEN\",\"message\":\"Only system admin can create project\"}]}", **TestProjects.USER_edit_project_creation_CLIENT)
 
         #4. Set project creation to "everyone";
         self.conf.set_configurations_of_project_creation_restriction("everyone", **ADMIN_CLIENT)

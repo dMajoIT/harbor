@@ -22,14 +22,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/utils/log"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // Send ...
 func Send(addr, identity, username, password string,
 	timeout int, tls, insecure bool, from string,
 	to []string, subject, message string) error {
-
 	client, err := newClient(addr, identity, username,
 		password, timeout, tls, insecure)
 	if err != nil {

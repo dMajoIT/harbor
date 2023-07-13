@@ -18,40 +18,36 @@ import (
 	"time"
 )
 
-// UserTable is the name of table in DB that holds the user object
-const UserTable = "harbor_user"
-
 // User holds the details of a user.
 type User struct {
-	UserID   int    `orm:"pk;auto;column(user_id)" json:"user_id"`
-	Username string `orm:"column(username)" json:"username"`
-	Email    string `orm:"column(email)" json:"email"`
-	Password string `orm:"column(password)" json:"password"`
-	Realname string `orm:"column(realname)" json:"realname"`
-	Comment  string `orm:"column(comment)" json:"comment"`
-	Deleted  bool   `orm:"column(deleted)" json:"deleted"`
-	Rolename string `orm:"-" json:"role_name"`
-	// if this field is named as "RoleID", beego orm can not map role_id
-	// to it.
-	Role int `orm:"-" json:"role_id"`
-	//	RoleList     []Role `json:"role_list"`
-	HasAdminRole bool         `orm:"column(sysadmin_flag)" json:"has_admin_role"`
-	ResetUUID    string       `orm:"column(reset_uuid)" json:"reset_uuid"`
-	Salt         string       `orm:"column(salt)" json:"-"`
-	CreationTime time.Time    `orm:"column(creation_time);auto_now_add" json:"creation_time"`
-	UpdateTime   time.Time    `orm:"column(update_time);auto_now" json:"update_time"`
-	GroupList    []*UserGroup `orm:"-" json:"-"`
-	OIDCUserMeta *OIDCUser    `orm:"-" json:"oidc_user_meta,omitempty"`
+	UserID          int    `json:"user_id"`
+	Username        string `json:"username" sort:"default"`
+	Email           string `json:"email"`
+	Password        string `json:"password"`
+	PasswordVersion string `json:"password_version"`
+	Realname        string `json:"realname"`
+	Comment         string `json:"comment"`
+	Deleted         bool   `json:"deleted"`
+	Rolename        string `json:"role_name"`
+	Role            int    `json:"role_id"`
+	SysAdminFlag    bool   `json:"sysadmin_flag"`
+	// AdminRoleInAuth to store the admin privilege granted by external authentication provider
+	AdminRoleInAuth bool      `json:"admin_role_in_auth"`
+	ResetUUID       string    `json:"reset_uuid"`
+	Salt            string    `json:"-"`
+	CreationTime    time.Time `json:"creation_time"`
+	UpdateTime      time.Time `json:"update_time"`
+	GroupIDs        []int     `json:"-"`
+	OIDCUserMeta    *OIDCUser `json:"oidc_user_meta,omitempty"`
 }
 
-// UserQuery ...
-type UserQuery struct {
-	Username   string
-	Email      string
-	Pagination *Pagination
-}
+type Users []*User
 
-// TableName ...
-func (u *User) TableName() string {
-	return UserTable
+// MapByUserID returns map which key is UserID of the user and value is the user itself
+func (users Users) MapByUserID() map[int]*User {
+	m := map[int]*User{}
+	for _, user := range users {
+		m[user.UserID] = user
+	}
+	return m
 }

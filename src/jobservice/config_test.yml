@@ -18,7 +18,7 @@ worker_pool:
   #Additional config if use 'redis' backend
   redis_pool:
     #redis://[arbitrary_username:password@]ipaddress:port/database_index
-    #or ipaddress:port[,weight,password,database_index]
+    #or ipaddress:port[|weight|password|database_index]
     redis_url: "localhost:6379"
     namespace: "testing_job_service_v2"
 
@@ -39,3 +39,10 @@ job_loggers:
 loggers:
   - name: "STD_OUTPUT" # Same with above
     level: "DEBUG"
+
+reaper:
+  # the max time to wait for the job to finish, if not finished, the job will be mark as error, default value is 24
+  max_update_hours: 24
+  max_dangling_hours: 168
+
+max_retrieve_size_mb: 10

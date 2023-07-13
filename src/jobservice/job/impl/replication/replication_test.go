@@ -17,11 +17,12 @@ package replication
 import (
 	"testing"
 
-	"github.com/goharbor/harbor/src/jobservice/job/impl"
-	"github.com/goharbor/harbor/src/replication/model"
-	"github.com/goharbor/harbor/src/replication/transfer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/goharbor/harbor/src/controller/replication/transfer"
+	"github.com/goharbor/harbor/src/jobservice/job/impl"
+	"github.com/goharbor/harbor/src/pkg/reg/model"
 )
 
 func TestParseParam(t *testing.T) {
@@ -48,17 +49,6 @@ func TestParseParam(t *testing.T) {
 	assert.Equal(t, "tom", p.Name)
 }
 
-func TestParseParams(t *testing.T) {
-	params := map[string]interface{}{
-		"src_resource": `{"type":"chart"}`,
-		"dst_resource": `{"type":"chart"}`,
-	}
-	res, dst, err := parseParams(params)
-	require.Nil(t, err)
-	assert.Equal(t, "chart", string(res.Type))
-	assert.Equal(t, "chart", string(dst.Type))
-}
-
 func TestMaxFails(t *testing.T) {
 	rep := &Replication{}
 	assert.Equal(t, uint(3), rep.MaxFails())
@@ -82,16 +72,16 @@ var fakedTransferFactory = func(transfer.Logger, transfer.StopFunc) (transfer.Tr
 
 type fakedTransfer struct{}
 
-func (f *fakedTransfer) Transfer(src *model.Resource, dst *model.Resource) error {
+func (f *fakedTransfer) Transfer(src *model.Resource, dst *model.Resource, opts *transfer.Options) error {
 	transferred = true
 	return nil
 }
 
 func TestRun(t *testing.T) {
-	err := transfer.RegisterFactory("res", fakedTransferFactory)
+	err := transfer.RegisterFactory("art", fakedTransferFactory)
 	require.Nil(t, err)
 	params := map[string]interface{}{
-		"src_resource": `{"type":"res"}`,
+		"src_resource": `{"type":"art"}`,
 		"dst_resource": `{}`,
 	}
 	rep := &Replication{}

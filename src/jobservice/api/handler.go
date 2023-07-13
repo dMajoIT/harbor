@@ -16,25 +16,29 @@ package api
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
 
-	"fmt"
 	"github.com/goharbor/harbor/src/jobservice/common/query"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
+	"github.com/goharbor/harbor/src/jobservice/config"
 	"github.com/goharbor/harbor/src/jobservice/core"
 	"github.com/goharbor/harbor/src/jobservice/errs"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/logger"
-	"github.com/pkg/errors"
-	"strconv"
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
-const totalHeaderKey = "Total-Count"
+const (
+	totalHeaderKey = "Total-Count"
+	nextCursorKey  = "Next-Cursor"
+)
 
 // Handler defines approaches to handle the http requests.
 type Handler interface {
@@ -53,11 +57,14 @@ type Handler interface {
 	// HandleJobLogReq is used to handle the request of getting job logs
 	HandleJobLogReq(w http.ResponseWriter, req *http.Request)
 
-	// HandleJobLogReq is used to handle the request of getting periodic executions
+	// HandlePeriodicExecutions is used to handle the request of getting periodic executions
 	HandlePeriodicExecutions(w http.ResponseWriter, req *http.Request)
 
-	// HandleScheduledJobs is used to handle the request of getting pending scheduled jobs
-	HandleScheduledJobs(w http.ResponseWriter, req *http.Request)
+	// HandleGetJobsReq is used to handle the request of getting jobs
+	HandleGetJobsReq(w http.ResponseWriter, req *http.Request)
+
+	// HandleGetConfigReq is used to handle the request of getting configure
+	HandleGetConfigReq(w http.ResponseWriter, req *http.Request)
 }
 
 // DefaultHandler is the default request handler which implements the Handler interface.
@@ -74,7 +81,7 @@ func NewDefaultHandler(ctl core.Interface) *DefaultHandler {
 
 // HandleLaunchJobReq is implementation of method defined in interface 'Handler'
 func (dh *DefaultHandler) HandleLaunchJobReq(w http.ResponseWriter, req *http.Request) {
-	data, err := ioutil.ReadAll(req.Body)
+	data, err := io.ReadAll(req.Body)
 	if err != nil {
 		dh.handleError(w, req, http.StatusInternalServerError, errs.ReadRequestBodyError(err))
 		return
@@ -136,7 +143,7 @@ func (dh *DefaultHandler) HandleJobActionReq(w http.ResponseWriter, req *http.Re
 	vars := mux.Vars(req)
 	jobID := vars["job_id"]
 
-	data, err := ioutil.ReadAll(req.Body)
+	data, err := io.ReadAll(req.Body)
 	if err != nil {
 		dh.handleError(w, req, http.StatusInternalServerError, errs.ReadRequestBodyError(err))
 		return
@@ -241,20 +248,26 @@ func (dh *DefaultHandler) HandlePeriodicExecutions(w http.ResponseWriter, req *h
 
 	w.Header().Add(totalHeaderKey, fmt.Sprintf("%d", total))
 	dh.handleJSONData(w, req, http.StatusOK, executions)
-
 }
 
-// HandleScheduledJobs is implementation of method defined in interface 'Handler'
-func (dh *DefaultHandler) HandleScheduledJobs(w http.ResponseWriter, req *http.Request) {
+// HandleGetJobsReq is implementation of method defined in interface 'Handler'
+func (dh *DefaultHandler) HandleGetJobsReq(w http.ResponseWriter, req *http.Request) {
 	// Get query parameters
 	q := extractQuery(req)
-	jobs, total, err := dh.controller.ScheduledJobs(q)
+	jobs, total, err := dh.controller.GetJobs(q)
 	if err != nil {
-		dh.handleError(w, req, http.StatusInternalServerError, errs.GetScheduledJobsError(err))
+		dh.handleError(w, req, http.StatusInternalServerError, errs.GetJobsError(q, err))
 		return
 	}
 
-	w.Header().Add(totalHeaderKey, fmt.Sprintf("%d", total))
+	key := nextCursorKey
+	if v, ok := q.Extras.Get(query.ExtraParamKeyKind); ok {
+		if kind, yes := v.(string); yes && kind == job.KindScheduled {
+			key = totalHeaderKey
+		}
+	}
+
+	w.Header().Add(key, fmt.Sprintf("%d", total))
 	dh.handleJSONData(w, req, http.StatusOK, jobs)
 }
 
@@ -267,8 +280,8 @@ func (dh *DefaultHandler) handleJSONData(w http.ResponseWriter, req *http.Reques
 
 	logger.Debugf("Serve http request '%s %s': %d %s", req.Method, req.URL.String(), code, data)
 
-	w.Header().Set(http.CanonicalHeaderKey("Accept"), "application/json")
-	w.Header().Set(http.CanonicalHeaderKey("content-type"), "application/json")
+	w.Header().Set("Accept", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	writeDate(w, data)
 }
@@ -283,6 +296,18 @@ func (dh *DefaultHandler) handleError(w http.ResponseWriter, req *http.Request, 
 
 func (dh *DefaultHandler) log(req *http.Request, code int, text string) {
 	logger.Debugf("Serve http request '%s %s': %d %s", req.Method, req.URL.String(), code, text)
+}
+
+// HandleGetConfigReq return the config of the job service
+func (dh *DefaultHandler) HandleGetConfigReq(w http.ResponseWriter, req *http.Request) {
+	if config.DefaultConfig == nil || config.DefaultConfig.PoolConfig == nil || config.DefaultConfig.PoolConfig.RedisPoolCfg == nil {
+		logger.Errorf("Failed to get config, config is nil")
+		dh.handleError(w, req, http.StatusInternalServerError, errs.HandleJSONDataError(fmt.Errorf("no configuration")))
+		return
+	}
+	dh.handleJSONData(w, req, http.StatusOK, &job.Config{
+		RedisPoolConfig: config.DefaultConfig.PoolConfig.RedisPoolCfg,
+	})
 }
 
 func extractQuery(req *http.Request) *query.Parameter {
@@ -318,6 +343,20 @@ func extractQuery(req *http.Request) *query.Parameter {
 	if !utils.IsEmptyStr(nonStoppedOnly) {
 		if nonStoppedOnlyV, err := strconv.ParseBool(nonStoppedOnly); err == nil {
 			q.Extras.Set(query.ExtraParamKeyNonStoppedOnly, nonStoppedOnlyV)
+		}
+	}
+
+	// Extra job kind query param
+	jobKind := queries.Get(query.ParamKeyJobKind)
+	if !utils.IsEmptyStr(jobKind) {
+		q.Extras.Set(query.ExtraParamKeyKind, jobKind)
+	}
+
+	// Extra query cursor
+	cursorV := queries.Get(query.ParamKeyCursor)
+	if !utils.IsEmptyStr(cursorV) {
+		if cursor, err := strconv.ParseInt(cursorV, 10, 32); err == nil {
+			q.Extras.Set(query.ExtraParamKeyCursor, cursor)
 		}
 	}
 

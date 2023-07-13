@@ -1,39 +1,37 @@
-FROM node:10.15.0 as nodeportal
+ARG harbor_base_image_version
+ARG harbor_base_namespace
+FROM node:16.18.0 as nodeportal
 
-RUN mkdir -p /portal_src
-RUN mkdir -p /build_dir
+WORKDIR /build_dir
 
-COPY make/photon/portal/entrypoint.sh /
-COPY src/portal /portal_src
-COPY ./docs/swagger.yaml   /portal_src
+ARG npm_registry=https://registry.npmjs.org
 
-WORKDIR /portal_src
+COPY ./api/v2.0/swagger.yaml /build_dir/swagger.yaml
+COPY src/portal /build_dir
 
-RUN npm install && \
-    chmod u+x /entrypoint.sh
-RUN /entrypoint.sh
-VOLUME ["/portal_src"]
+ENV NPM_CONFIG_REGISTRY=${npm_registry}
+RUN npm install --unsafe-perm
+RUN npm run generate-build-timestamp
+RUN node --max_old_space_size=2048 'node_modules/@angular/cli/bin/ng' build --configuration production
+RUN npm install js-yaml@4.1.0 \
+    && node -e "const yaml = require('js-yaml'); const fs = require('fs'); const swagger = yaml.load(fs.readFileSync('swagger.yaml', 'utf8')); fs.writeFileSync('swagger.json', JSON.stringify(swagger));"
 
+COPY ./LICENSE /build_dir/dist
 
-FROM photon:2.0
+RUN cd app-swagger-ui && npm install --unsafe-perm
+RUN cd app-swagger-ui && npm run build
 
-RUN tdnf install -y nginx >> /dev/null \
-    && ln -sf /dev/stdout /var/log/nginx/access.log \
-    && ln -sf /dev/stderr /var/log/nginx/error.log \
-    && tdnf clean all
-
-EXPOSE 80
-VOLUME /var/cache/nginx /var/log/nginx /run
-
+FROM ${harbor_base_namespace}/harbor-portal-base:${harbor_base_image_version}
 
 COPY --from=nodeportal /build_dir/dist /usr/share/nginx/html
-COPY --from=nodeportal /build_dir/swagger.yaml /usr/share/nginx/html
 COPY --from=nodeportal /build_dir/swagger.json /usr/share/nginx/html
+COPY --from=nodeportal /build_dir/app-swagger-ui/dist /usr/share/nginx/html
 
-COPY make/photon/portal/nginx.conf /etc/nginx/nginx.conf
+VOLUME /var/cache/nginx /var/log/nginx /run
 
 STOPSIGNAL SIGQUIT
 
-HEALTHCHECK CMD curl --fail -s http://127.0.0.1 || exit 1
-
+HEALTHCHECK CMD curl --fail -s http://localhost:8080 || curl -k --fail -s https://localhost:8443 || exit 1
+USER nginx
 CMD ["nginx", "-g", "daemon off;"]
+

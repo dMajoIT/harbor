@@ -1,16 +1,17 @@
 .side-nav-override {
-    box-shadow: 6px 0px 0px 0px #ccc;
+    box-shadow: 6px 0 0 0 #ccc;
 }
 
 .container-override {
     position: relative !important;
 }
+
 .content-container{
     position: relative;
 }
 
 .start-content-padding {
-    padding: 0px !important;
+    padding: 0 !important;
     background-color: white;
     overflow-y: hidden !important;
 }
@@ -32,21 +33,16 @@ clr-vertical-nav {
             justify-content: space-between;
         }
     }
-    .vertical-nav-footer {
-        margin: 15px 20px;
-        a {
-            display: inline-block;
-            line-height: 0;
-            padding: 0;
-            height: 24px;
-            &:hover {
-                background: transparent;
-                cursor: default;
-            }
-            .api-button {
-                margin: 0;
-            }
-        }
-	}
 }
 
+.font-size-13 {
+    font-size: 13px;
+}
+
+.global-msg {
+    position: absolute;
+    top: 0;
+    left: 2rem;
+    right: 2rem;
+    z-index: 600;
+}

@@ -22,11 +22,14 @@ import (
 	"net"
 	"net/url"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/utils/log"
+	cronlib "github.com/robfig/cron/v3"
+
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // ParseEndpoint parses endpoint to a URL
@@ -63,10 +66,9 @@ func ParseRepository(repository string) (project, rest string) {
 	return
 }
 
-// GenerateRandomString generates a random string
-func GenerateRandomString() string {
-	length := 32
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+// GenerateRandomStringWithLen generates a random string with length
+func GenerateRandomStringWithLen(length int) string {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	l := len(chars)
 	result := make([]byte, length)
 	_, err := rand.Read(result)
@@ -79,13 +81,18 @@ func GenerateRandomString() string {
 	return string(result)
 }
 
+// GenerateRandomString generate a random string with 32 byte length
+func GenerateRandomString() string {
+	return GenerateRandomStringWithLen(32)
+}
+
 // TestTCPConn tests TCP connection
 // timeout: the total time before returning if something is wrong
 // with the connection, in second
 // interval: the interval time for retring after failure, in second
 func TestTCPConn(addr string, timeout, interval int) error {
-	success := make(chan int)
-	cancel := make(chan int)
+	success := make(chan int, 1)
+	cancel := make(chan int, 1)
 
 	go func() {
 		n := 1
@@ -158,12 +165,9 @@ func ParseProjectIDOrName(value interface{}) (int64, string, error) {
 
 	var id int64
 	var name string
-	switch value.(type) {
-	case int:
-		i := value.(int)
-		id = int64(i)
-	case int64:
-		id = value.(int64)
+	switch v := value.(type) {
+	case int, int64:
+		id = reflect.ValueOf(v).Int()
 	case string:
 		name = value.(string)
 	default:
@@ -204,16 +208,6 @@ func SafeCastFloat64(value interface{}) float64 {
 	return 0
 }
 
-// ParseOfftime ...
-func ParseOfftime(offtime int64) (hour, minite, second int) {
-	offtime = offtime % (3600 * 24)
-	hour = int(offtime / 3600)
-	offtime = offtime % 3600
-	minite = int(offtime / 60)
-	second = int(offtime % 60)
-	return
-}
-
 // TrimLower ...
 func TrimLower(str string) string {
 	return strings.TrimSpace(strings.ToLower(str))
@@ -230,7 +224,14 @@ func GetStrValueOfAnyType(value interface{}) string {
 		}
 		strVal = string(b)
 	} else {
-		strVal = fmt.Sprintf("%v", value)
+		switch val := value.(type) {
+		case float64:
+			strVal = strconv.FormatFloat(val, 'f', -1, 64)
+		case float32:
+			strVal = strconv.FormatFloat(float64(val), 'f', -1, 32)
+		default:
+			strVal = fmt.Sprintf("%v", value)
+		}
 	}
 	return strVal
 }
@@ -249,9 +250,79 @@ func IsIllegalLength(s string, min int, max int) bool {
 // IsContainIllegalChar ...
 func IsContainIllegalChar(s string, illegalChar []string) bool {
 	for _, c := range illegalChar {
-		if strings.Index(s, c) >= 0 {
+		if strings.Contains(s, c) {
 			return true
 		}
 	}
 	return false
+}
+
+// ParseJSONInt ...
+func ParseJSONInt(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	default:
+		return 0, false
+	}
+}
+
+// FindNamedMatches returns named matches of the regexp groups
+func FindNamedMatches(regex *regexp.Regexp, str string) map[string]string {
+	match := regex.FindStringSubmatch(str)
+
+	results := map[string]string{}
+	for i, name := range match {
+		results[regex.SubexpNames()[i]] = name
+	}
+	return results
+}
+
+// NextSchedule return next scheduled time with a cron string and current time provided
+// the cron string could contain 6 tokens
+// if the cron string is invalid, it returns a zero time
+func NextSchedule(cron string, curTime time.Time) time.Time {
+	if len(cron) == 0 {
+		return time.Time{}
+	}
+	cr := strings.TrimSpace(cron)
+	s, err := CronParser().Parse(cr)
+	if err != nil {
+		log.Debugf("the cron string %v is invalid, error: %v", cron, err)
+		return time.Time{}
+	}
+	return s.Next(curTime)
+}
+
+// CronParser returns the parser of cron string with format of "* * * * * *"
+func CronParser() cronlib.Parser {
+	return cronlib.NewParser(cronlib.Second | cronlib.Minute | cronlib.Hour | cronlib.Dom | cronlib.Month | cronlib.Dow)
+}
+
+// MostMatchSorter is a sorter for the most match, usually invoked in sort Less function
+// usage:
+//
+//	sort.Slice(input, func(i, j int) bool {
+//		return MostMatchSorter(input[i].GroupName, input[j].GroupName, matchWord)
+//	})
+// a is the field to be used for sorting, b is the other field, matchWord is the word to be matched
+// the return value is true if a is less than b
+// for example, search with "user",  input is {"harbor_user", "user", "users, "admin_user"}
+// it returns with this order {"user", "users", "admin_user", "harbor_user"}
+
+func MostMatchSorter(a, b string, matchWord string) bool {
+	// exact match always first
+	if a == matchWord {
+		return true
+	}
+	if b == matchWord {
+		return false
+	}
+	// sort by length, then sort by alphabet
+	if len(a) == len(b) {
+		return a < b
+	}
+	return len(a) < len(b)
 }

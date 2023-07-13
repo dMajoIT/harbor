@@ -19,14 +19,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/jobservice/common/query"
-
-	"github.com/goharbor/harbor/src/jobservice/common/utils"
-	"github.com/goharbor/harbor/src/jobservice/tests"
 	"github.com/gomodule/redigo/redis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/jobservice/common/list"
+	"github.com/goharbor/harbor/src/jobservice/common/utils"
+	"github.com/goharbor/harbor/src/jobservice/tests"
 )
 
 // TrackerTestSuite tests functions of tracker
@@ -79,6 +79,7 @@ func (suite *TrackerTestSuite) TestTracker() {
 		func(hookURL string, change *StatusChange) error {
 			return nil
 		},
+		list.New(),
 	)
 
 	err := tracker.Save()
@@ -109,12 +110,19 @@ func (suite *TrackerTestSuite) TestTracker() {
 	assert.Error(suite.T(), err, "run: non nil error expected but got nil")
 	err = tracker.CheckIn("check in")
 	assert.Nil(suite.T(), err, "check in: nil error expected but got %s", err)
+	// check in is allowed to be repeated
+	err = tracker.CheckIn("check in2")
+	assert.Nil(suite.T(), err, "check in2: nil error expected but got %s", err)
+
 	err = tracker.Succeed()
 	assert.Nil(suite.T(), err, "succeed: nil error expected but got %s", err)
-	err = tracker.Stop()
-	assert.Nil(suite.T(), err, "stop: nil error expected but got %s", err)
+	// same status is allowed to update
+	err = tracker.Succeed()
+	assert.Nil(suite.T(), err, "succeed again: nil error expected but got %s", err)
+
+	// final status can be set only once
 	err = tracker.Fail()
-	assert.Nil(suite.T(), err, "fail: nil error expected but got %s", err)
+	assert.Error(suite.T(), err, "fail: error expected but got nil")
 
 	t := NewBasicTrackerWithID(
 		context.TODO(),
@@ -124,12 +132,25 @@ func (suite *TrackerTestSuite) TestTracker() {
 		func(hookURL string, change *StatusChange) error {
 			return nil
 		},
+		list.New(),
 	)
 	err = t.Load()
 	assert.NoError(suite.T(), err)
 
-	err = t.Expire()
+	var st Status
+	err = t.Reset()
 	assert.NoError(suite.T(), err)
+
+	st, err = t.Status()
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), PendingStatus, st)
+
+	err = t.Stop()
+	assert.NoError(suite.T(), err)
+
+	st, err = t.Status()
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), StoppedStatus, st)
 }
 
 // TestPeriodicTracker tests tracker of periodic
@@ -148,7 +169,7 @@ func (suite *TrackerTestSuite) TestPeriodicTracker() {
 		},
 	}
 
-	t := NewBasicTrackerWithStats(context.TODO(), mockJobStats, suite.namespace, suite.pool, nil)
+	t := NewBasicTrackerWithStats(context.TODO(), mockJobStats, suite.namespace, suite.pool, nil, nil)
 	err := t.Save()
 	require.NoError(suite.T(), err)
 
@@ -168,7 +189,7 @@ func (suite *TrackerTestSuite) TestPeriodicTracker() {
 		},
 	}
 
-	t2 := NewBasicTrackerWithStats(context.TODO(), executionStats, suite.namespace, suite.pool, nil)
+	t2 := NewBasicTrackerWithStats(context.TODO(), executionStats, suite.namespace, suite.pool, nil, nil)
 	err = t2.Save()
 	require.NoError(suite.T(), err)
 
@@ -176,43 +197,6 @@ func (suite *TrackerTestSuite) TestPeriodicTracker() {
 	require.NoError(suite.T(), err)
 	assert.Equal(suite.T(), nID, id)
 
-	_, total, err := t.Executions(&query.Parameter{
-		PageNumber: 1,
-		PageSize:   10,
-		Extras:     make(query.ExtraParameters),
-	})
-	require.NoError(suite.T(), err)
-	assert.Equal(suite.T(), int64(1), total)
-
 	err = t2.PeriodicExecutionDone()
-	require.NoError(suite.T(), err)
-}
-
-// TestPushForRetry tests push for retry
-func (suite *TrackerTestSuite) TestPushForRetry() {
-	ID := utils.MakeIdentifier()
-	runAt := time.Now().Add(1 * time.Hour).Unix()
-	jobStats := &Stats{
-		Info: &StatsInfo{
-			JobID:       ID,
-			Status:      ScheduledStatus.String(),
-			JobKind:     KindScheduled,
-			JobName:     SampleJob,
-			IsUnique:    false,
-			RunAt:       runAt,
-			EnqueueTime: runAt,
-		},
-	}
-
-	t := &basicTracker{
-		namespace: suite.namespace,
-		context:   context.TODO(),
-		pool:      suite.pool,
-		jobID:     ID,
-		jobStats:  jobStats,
-		callback:  nil,
-	}
-
-	err := t.pushToQueueForRetry(RunningStatus)
 	require.NoError(suite.T(), err)
 }

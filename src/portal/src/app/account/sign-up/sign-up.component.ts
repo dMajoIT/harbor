@@ -11,20 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { Component, Output, ViewChild, EventEmitter } from '@angular/core';
-import { Modal } from '../../../../lib/src/service/interface';
-
-import { NewUserFormComponent } from '../../shared/new-user-form/new-user-form.component';
-import { User } from '../../user/user';
-import { SessionService } from '../../shared/session.service';
-import { UserService } from '../../user/user.service';
-import { InlineAlertComponent } from '../../shared/inline-alert/inline-alert.component';
-
+import { Component, EventEmitter, Output, ViewChild } from '@angular/core';
+import { Modal } from '../../shared/services';
+import { NewUserFormComponent } from '../../shared/components/new-user-form/new-user-form.component';
+import { User } from '../../base/left-side-nav/user/user';
+import { SessionService } from '../../shared/services/session.service';
+import { UserService } from '../../base/left-side-nav/user/user.service';
+import { InlineAlertComponent } from '../../shared/components/inline-alert/inline-alert.component';
 
 @Component({
     selector: 'sign-up',
-    templateUrl: "sign-up.component.html",
-    styleUrls: ['../../common.scss']
+    templateUrl: 'sign-up.component.html',
+    styleUrls: ['../../common.scss'],
 })
 export class SignUpComponent {
     opened: boolean = false;
@@ -37,13 +35,14 @@ export class SignUpComponent {
 
     constructor(
         private session: SessionService,
-        private userService: UserService) { }
+        private userService: UserService
+    ) {}
 
-    @ViewChild(NewUserFormComponent)
+    @ViewChild(NewUserFormComponent, { static: true })
     newUserForm: NewUserFormComponent;
 
     @ViewChild(InlineAlertComponent)
-    inlienAlert: InlineAlertComponent;
+    inlineAlert: InlineAlertComponent;
 
     @ViewChild(Modal)
     modal: Modal;
@@ -67,7 +66,7 @@ export class SignUpComponent {
         if (this.error != null) {
             this.error = null; // clear error
         }
-        this.inlienAlert.close(); // Close alert if being shown
+        this.inlineAlert.close(); // Close alert if being shown
     }
 
     open(): void {
@@ -76,7 +75,7 @@ export class SignUpComponent {
         this.formValueChanged = false;
         this.error = null;
         this.onGoing = false;
-        this.inlienAlert.close();
+        this.inlineAlert.close();
 
         this.modal.open();
     }
@@ -87,8 +86,8 @@ export class SignUpComponent {
                 this.opened = false;
             } else {
                 // Need user confirmation
-                this.inlienAlert.showInlineConfirmation({
-                    message: "ALERT.FORM_CHANGE_CONFIRMATION"
+                this.inlineAlert.showInlineConfirmation({
+                    message: 'ALERT.FORM_CHANGE_CONFIRMATION',
                 });
             }
         } else {
@@ -118,16 +117,18 @@ export class SignUpComponent {
         // Start process
         this.onGoing = true;
 
-        this.userService.addUser(u)
-            .subscribe(() => {
+        this.userService.addUser(u).subscribe(
+            () => {
                 this.onGoing = false;
                 this.opened = false;
                 this.modal.close();
                 this.userCreation.emit(u);
-            }, error => {
+            },
+            error => {
                 this.onGoing = false;
                 this.error = error;
-                this.inlienAlert.showInlineError(error);
-            });
+                this.inlineAlert.showInlineError(error);
+            }
+        );
     }
 }

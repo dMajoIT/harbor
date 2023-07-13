@@ -15,26 +15,13 @@
 package models
 
 import (
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 )
 
 func init() {
 	orm.RegisterModel(
-		new(User),
-		new(Project),
 		new(Role),
-		new(AccessLog),
-		new(ScanJob),
-		new(RepoRecord),
-		new(ImgScanOverview),
-		new(ClairVulnTimestamp),
-		new(ProjectMetadata),
-		new(ConfigEntry),
-		new(Label),
 		new(ResourceLabel),
-		new(UserGroup),
-		new(AdminJob),
-		new(JobLog),
-		new(Robot),
-		new(OIDCUser))
+		new(OIDCUser),
+	)
 }

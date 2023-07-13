@@ -17,8 +17,12 @@ package impl
 import (
 	"context"
 	"errors"
+
+	o "github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/logger"
+	"github.com/goharbor/harbor/src/lib/orm"
 )
 
 // DefaultContext provides a basic job context
@@ -49,7 +53,8 @@ func (dc *DefaultContext) Build(t job.Tracker) (job.Context, error) {
 	}
 
 	jContext := &DefaultContext{
-		sysContext: dc.sysContext,
+		// TODO support DB transaction
+		sysContext: orm.NewContext(dc.sysContext, o.NewOrm()),
 		tracker:    t,
 		properties: make(map[string]interface{}),
 	}

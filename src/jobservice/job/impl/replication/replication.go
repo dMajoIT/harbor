@@ -18,22 +18,40 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/replication/model"
-	"github.com/goharbor/harbor/src/replication/transfer"
-
+	"github.com/goharbor/harbor/src/controller/replication/transfer"
 	// import chart transfer
-	_ "github.com/goharbor/harbor/src/replication/transfer/chart"
-	// import image transfer
-	_ "github.com/goharbor/harbor/src/replication/transfer/image"
-	// register the Harbor adapter
-	_ "github.com/goharbor/harbor/src/replication/adapter/harbor"
-	// register the DockerHub adapter
-	_ "github.com/goharbor/harbor/src/replication/adapter/dockerhub"
-	// register the Native adapter
-	_ "github.com/goharbor/harbor/src/replication/adapter/native"
-	// register the Huawei adapter
-	_ "github.com/goharbor/harbor/src/replication/adapter/huawei"
+	_ "github.com/goharbor/harbor/src/controller/replication/transfer/image"
+	"github.com/goharbor/harbor/src/jobservice/job"
+
+	// import aliacr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/aliacr"
+	// import awsecr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/awsecr"
+	// import azurecr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/azurecr"
+	// import dockerhub adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/dockerhub"
+	// import dtr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/dtr"
+	// import githubcr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/githubcr"
+	// import gitlab adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/gitlab"
+	// import googlegcr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/googlegcr"
+	// import harbor adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/harbor"
+	// import huawei adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/huawei"
+	// import jfrog adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/jfrog"
+	// import native adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/native"
+	// import quay adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/quay"
+	// import tencentcr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/tencentcr"
+	"github.com/goharbor/harbor/src/pkg/reg/model"
 )
 
 // Replication implements the job interface
@@ -42,6 +60,11 @@ type Replication struct{}
 // MaxFails returns that how many times this job can fail
 func (r *Replication) MaxFails() uint {
 	return 3
+}
+
+// MaxCurrency is implementation of same method in Interface.
+func (r *Replication) MaxCurrency() uint {
+	return 0
 }
 
 // ShouldRetry always returns true which means the job is needed to be restarted when fails
@@ -59,7 +82,7 @@ func (r *Replication) Validate(params job.Parameters) error {
 func (r *Replication) Run(ctx job.Context, params job.Parameters) error {
 	logger := ctx.GetLogger()
 
-	src, dst, err := parseParams(params)
+	src, dst, opts, err := parseParams(params)
 	if err != nil {
 		logger.Errorf("failed to parse parameters: %v", err)
 		return err
@@ -84,19 +107,53 @@ func (r *Replication) Run(ctx job.Context, params job.Parameters) error {
 		return err
 	}
 
-	return trans.Transfer(src, dst)
+	return trans.Transfer(src, dst, opts)
 }
 
-func parseParams(params map[string]interface{}) (*model.Resource, *model.Resource, error) {
+func parseParams(params map[string]interface{}) (*model.Resource, *model.Resource, *transfer.Options, error) {
 	src := &model.Resource{}
 	if err := parseParam(params, "src_resource", src); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+
 	dst := &model.Resource{}
 	if err := parseParam(params, "dst_resource", dst); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return src, dst, nil
+
+	var speed int32
+	value, exist := params["speed"]
+	if !exist {
+		speed = 0
+	} else {
+		if s, ok := value.(int32); ok {
+			speed = s
+		} else {
+			if s, ok := value.(int); ok {
+				speed = int32(s)
+			} else {
+				if s, ok := value.(float64); ok {
+					speed = int32(s)
+				} else {
+					return nil, nil, nil, fmt.Errorf("the value of speed isn't integer (%T)", value)
+				}
+			}
+		}
+	}
+
+	var copyByChunk bool
+	value, exist = params["copy_by_chunk"]
+	if exist {
+		if boolVal, ok := value.(bool); ok {
+			copyByChunk = boolVal
+		}
+	}
+
+	opts := transfer.NewOptions(
+		transfer.WithSpeed(speed),
+		transfer.WithCopyByChunk(copyByChunk),
+	)
+	return src, dst, opts, nil
 }
 
 func parseParam(params map[string]interface{}, name string, v interface{}) error {

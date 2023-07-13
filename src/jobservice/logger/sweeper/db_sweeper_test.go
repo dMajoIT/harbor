@@ -1,12 +1,14 @@
 package sweeper
 
 import (
-	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/utils/log"
-	"github.com/goharbor/harbor/src/jobservice/logger/backend"
-	"github.com/stretchr/testify/require"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/goharbor/harbor/src/common/dao"
+	"github.com/goharbor/harbor/src/jobservice/logger/backend"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 func TestMain(m *testing.M) {

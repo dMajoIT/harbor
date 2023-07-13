@@ -17,22 +17,20 @@ Documentation  This resource provides any keywords related to the Harbor private
 Resource  ../../resources/Util.robot
 
 *** Variables ***
-${HARBOR_VERSION}  v1.1.1
 
 *** Keywords ***
 Delete Success
     [Arguments]  @{obj}
-    :For  ${obj}  in  @{obj}
-    \    Retry Wait Until Page Contains Element  //clr-tab-content//div[contains(.,'${obj}')]/../div/clr-icon[@shape='success-standard']
-    Sleep  1
-    Capture Page Screenshot
+    FOR  ${obj}  IN  @{obj}
+        Retry Wait Until Page Contains Element  //*[@id='contentAll']//div[contains(.,'${obj}')]/../div/clr-icon[@shape='success-standard']
+    END
 
 Delete Fail
     [Arguments]  @{obj}
-    :For  ${obj}  in  @{obj}
-    \    Retry Wait Until Page Contains Element  //clr-tab-content//div[contains(.,'${obj}')]/../div/clr-icon[@shape='error-standard']
+    FOR  ${obj}  IN  @{obj}
+        Retry Wait Until Page Contains Element  //*[@id='contentAll']//div[contains(.,'${obj}')]/../div/clr-icon[@shape='error-standard']
+    END
     Sleep  1
-    Capture Page Screenshot
 
 Filter Object
 #Filter project repo user tag.
@@ -40,52 +38,75 @@ Filter Object
     Retry Element Click  xpath=//hbr-filter//clr-icon
     ${element}=  Set Variable  xpath=//hbr-filter//input
     Wait Until Element Is Visible And Enabled  ${element}
-    Input Text   ${element}  ${kw}
+    Retry Clear Element Text  ${element}
+    Retry Text Input   ${element}  ${kw}
     Sleep  3
+
+Filter Project
+    [Arguments]    ${kw}
+    Retry Element Click  ${logs_xpath}
+    Retry Element Click  ${projects_xpath}
+    Filter Object  ${kw}
 
 Select Object
 #select single element such as user project repo tag
     [Arguments]    ${obj}
     Retry Element Click  xpath=//clr-dg-row[contains(.,'${obj}')]//label
 
-# This func cannot support as the delete user flow changed.
 Multi-delete Object
     [Arguments]    ${delete_btn}  @{obj}
-    :For  ${obj}  in  @{obj}
-    \    ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label
-    \    Retry Element Click  ${element}
+    FOR  ${obj}  IN  @{obj}
+        ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label
+        Retry Element Click  ${element}
+    END
     Sleep  1
-    Capture Page Screenshot
     Retry Element Click  ${delete_btn}
     Sleep  1
-    Capture Page Screenshot
     Retry Element Click  ${repo_delete_on_card_view_btn}
     Sleep  1
-    Capture Page Screenshot
+    Sleep  1
+
+# This func cannot support as the delete user flow changed.
+Multi-delete Artifact
+    [Arguments]  @{obj}
+    FOR  ${obj}  IN  @{obj}
+        ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label
+        Retry Element Click  ${element}
+    END
+    Sleep  1
+    Retry Element Click  ${artifact_action_xpath}
+    Sleep  1
+    Retry Element Click  ${artifact_action_delete_xpath}
+    Sleep  1
+    Retry Element Click  ${repo_delete_on_card_view_btn}
+    Sleep  1
     Sleep  1
 
 Multi-delete User
     [Arguments]    @{obj}
-    :For  ${obj}  in  @{obj}
-    \    Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
+    FOR  ${obj}  IN  @{obj}
+        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
+    END
     Retry Element Click  ${member_action_xpath}
-    Retry Element Click  //clr-dropdown/clr-dropdown-menu/button[2]
+    Retry Element Click  //*[@id='deleteUser']
     Retry Double Keywords When Error  Retry Element Click  ${delete_btn}  Retry Wait Until Page Not Contains Element  ${delete_btn}
 
 
 Multi-delete Member
     [Arguments]    @{obj}
-    :For  ${obj}  in  @{obj}
-    \    Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
-    Retry Element Click  ${member_action_xpath}
-    Retry Element Click  ${delete_action_xpath}
+    FOR  ${obj}  IN  @{obj}
+        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//div[contains(@class,'clr-checkbox-wrapper')]/label
+    END
+    Retry Double Keywords When Error  Retry Element Click  ${member_action_xpath}  Retry Wait Until Page Contains Element  ${delete_action_xpath}
+    Retry Double Keywords When Error  Retry Element Click  ${delete_action_xpath}  Retry Wait Until Page Contains Element  ${delete_btn}
     Retry Double Keywords When Error  Retry Element Click  ${delete_btn}  Retry Wait Until Page Not Contains Element  ${delete_btn}
 
 
 Multi-delete Object Without Confirmation
     [Arguments]    @{obj}
-    :For  ${obj}  in  @{obj}
-    \    Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
+    FOR  ${obj}  IN  @{obj}
+        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
+    END
     Retry Double Keywords When Error  Retry Element Click  ${delete_btn_2}  Retry Wait Until Page Not Contains Element  ${delete_btn_2}
 
 

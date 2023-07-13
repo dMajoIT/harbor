@@ -15,186 +15,316 @@
 package robot
 
 import (
-	"os"
-	"strconv"
+	"context"
+	"fmt"
+	"reflect"
 	"testing"
 
-	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/common/rbac"
-	"github.com/goharbor/harbor/src/common/utils/log"
-	"github.com/goharbor/harbor/src/core/promgr"
-	"github.com/goharbor/harbor/src/core/promgr/pmsdriver/local"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+
+	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/rbac/project"
+	"github.com/goharbor/harbor/src/controller/robot"
+	"github.com/goharbor/harbor/src/pkg/permission/types"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	"github.com/goharbor/harbor/src/pkg/robot/model"
+	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
+	"github.com/goharbor/harbor/src/testing/mock"
 )
 
 var (
-	private = &models.Project{
-		Name:    "testrobot",
-		OwnerID: 1,
+	private = &proModels.Project{
+		ProjectID: 1,
+		Name:      "testrobot",
+		OwnerID:   1,
 	}
-	pm = promgr.NewDefaultProjectManager(local.NewDriver(), true)
 )
-
-func TestMain(m *testing.M) {
-	dbHost := os.Getenv("POSTGRESQL_HOST")
-	if len(dbHost) == 0 {
-		log.Fatalf("environment variable POSTGRES_HOST is not set")
-	}
-	dbUser := os.Getenv("POSTGRESQL_USR")
-	if len(dbUser) == 0 {
-		log.Fatalf("environment variable POSTGRES_USR is not set")
-	}
-	dbPortStr := os.Getenv("POSTGRESQL_PORT")
-	if len(dbPortStr) == 0 {
-		log.Fatalf("environment variable POSTGRES_PORT is not set")
-	}
-	dbPort, err := strconv.Atoi(dbPortStr)
-	if err != nil {
-		log.Fatalf("invalid POSTGRESQL_PORT: %v", err)
-	}
-
-	dbPassword := os.Getenv("POSTGRESQL_PWD")
-	dbDatabase := os.Getenv("POSTGRESQL_DATABASE")
-	if len(dbDatabase) == 0 {
-		log.Fatalf("environment variable POSTGRESQL_DATABASE is not set")
-	}
-
-	database := &models.Database{
-		Type: "postgresql",
-		PostGreSQL: &models.PostGreSQL{
-			Host:     dbHost,
-			Port:     dbPort,
-			Username: dbUser,
-			Password: dbPassword,
-			Database: dbDatabase,
-		},
-	}
-
-	log.Infof("POSTGRES_HOST: %s, POSTGRES_USR: %s, POSTGRES_PORT: %d, POSTGRES_PWD: %s\n", dbHost, dbUser, dbPort, dbPassword)
-
-	if err := dao.InitDatabase(database); err != nil {
-		log.Fatalf("failed to initialize database: %v", err)
-	}
-
-	// add project
-	id, err := dao.AddProject(*private)
-	if err != nil {
-		log.Fatalf("failed to add project: %v", err)
-	}
-	private.ProjectID = id
-	defer dao.DeleteProject(id)
-
-	os.Exit(m.Run())
-}
 
 func TestIsAuthenticated(t *testing.T) {
 	// unauthenticated
-	ctx := NewSecurityContext(nil, nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.False(t, ctx.IsAuthenticated())
 
 	// authenticated
-	ctx = NewSecurityContext(&models.Robot{
-		Name:     "test",
-		Disabled: false,
-	}, nil, nil)
+	ctx = NewSecurityContext(&robot.Robot{
+		Robot: model.Robot{
+			Name:     "test",
+			Disabled: false,
+		},
+	})
 	assert.True(t, ctx.IsAuthenticated())
 }
 
 func TestGetUsername(t *testing.T) {
 	// unauthenticated
-	ctx := NewSecurityContext(nil, nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.Equal(t, "", ctx.GetUsername())
 
 	// authenticated
-	ctx = NewSecurityContext(&models.Robot{
-		Name:     "test",
-		Disabled: false,
-	}, nil, nil)
+	ctx = NewSecurityContext(&robot.Robot{
+		Robot: model.Robot{
+			Name:     "test",
+			Disabled: false,
+		},
+	})
 	assert.Equal(t, "test", ctx.GetUsername())
+}
+
+func TestGetUser(t *testing.T) {
+	// unauthenticated
+	ctx := NewSecurityContext(nil)
+	assert.Equal(t, "", ctx.GetUsername())
+
+	// authenticated
+	ctx = NewSecurityContext(&robot.Robot{
+		Robot: model.Robot{
+			ID:       123,
+			Name:     "test",
+			Disabled: false,
+		},
+	})
+	assert.Equal(t, "test", ctx.User().Name)
+	assert.Equal(t, int64(123), ctx.User().ID)
 }
 
 func TestIsSysAdmin(t *testing.T) {
 	// unauthenticated
-	ctx := NewSecurityContext(nil, nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.False(t, ctx.IsSysAdmin())
 
 	// authenticated, non admin
-	ctx = NewSecurityContext(&models.Robot{
-		Name:     "test",
-		Disabled: false,
-	}, nil, nil)
+	ctx = NewSecurityContext(&robot.Robot{
+		Robot: model.Robot{
+			Name:     "test",
+			Disabled: false,
+		},
+	})
 	assert.False(t, ctx.IsSysAdmin())
 }
 
 func TestIsSolutionUser(t *testing.T) {
-	ctx := NewSecurityContext(nil, nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.False(t, ctx.IsSolutionUser())
 }
 
-func TestHasReadPerm(t *testing.T) {
-
-	rbacPolicy := &rbac.Policy{
-		Resource: "/project/testrobot/repository",
-		Action:   "pull",
+func TestHasPullPerm(t *testing.T) {
+	robot := &robot.Robot{
+		Robot: model.Robot{
+			Name:        "test_robot_1",
+			Description: "desc",
+		},
+		Permissions: []*robot.Permission{
+			{
+				Kind:      "project",
+				Namespace: "library",
+				Access: []*types.Policy{
+					{
+						Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+						Action:   rbac.ActionPull,
+					},
+				},
+			},
+		},
 	}
-	policies := []*rbac.Policy{}
-	policies = append(policies, rbacPolicy)
-	robot := &models.Robot{
-		Name:        "test_robot_1",
-		Description: "desc",
-	}
 
-	ctx := NewSecurityContext(robot, pm, policies)
-	resource := rbac.NewProjectNamespace(private.Name).Resource(rbac.ResourceRepository)
-	assert.True(t, ctx.Can(rbac.ActionPull, resource))
+	ctl := &projecttesting.Controller{}
+	mock.OnAnything(ctl, "Get").Return(private, nil)
+
+	ctx := NewSecurityContext(robot)
+	ctx.ctl = ctl
+	resource := project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+	assert.True(t, ctx.Can(context.TODO(), rbac.ActionPull, resource))
 }
 
-func TestHasWritePerm(t *testing.T) {
-
-	rbacPolicy := &rbac.Policy{
-		Resource: "/project/testrobot/repository",
-		Action:   "push",
+func TestHasPushPerm(t *testing.T) {
+	robot := &robot.Robot{
+		Robot: model.Robot{
+			Name:     "test",
+			Disabled: false,
+		},
+		Permissions: []*robot.Permission{
+			{
+				Kind:      "project",
+				Namespace: "library",
+				Access: []*types.Policy{
+					{
+						Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+						Action:   rbac.ActionPush,
+					},
+				},
+			},
+		},
 	}
-	policies := []*rbac.Policy{}
-	policies = append(policies, rbacPolicy)
-	robot := &models.Robot{
-		Name:        "test_robot_2",
-		Description: "desc",
-	}
 
-	ctx := NewSecurityContext(robot, pm, policies)
-	resource := rbac.NewProjectNamespace(private.Name).Resource(rbac.ResourceRepository)
-	assert.True(t, ctx.Can(rbac.ActionPush, resource))
+	ctl := &projecttesting.Controller{}
+	mock.OnAnything(ctl, "Get").Return(private, nil)
+
+	ctx := NewSecurityContext(robot)
+	ctx.ctl = ctl
+	resource := project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+	assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource))
 }
 
-func TestHasAllPerm(t *testing.T) {
-	rbacPolicy := &rbac.Policy{
-		Resource: "/project/testrobot/repository",
-		Action:   "push+pull",
-	}
-	policies := []*rbac.Policy{}
-	policies = append(policies, rbacPolicy)
-	robot := &models.Robot{
-		Name:        "test_robot_3",
-		Description: "desc",
+func TestHasPushPullPerm(t *testing.T) {
+	robot := &robot.Robot{
+		Robot: model.Robot{
+			Name:        "test_robot_3",
+			Description: "desc",
+		},
+		Permissions: []*robot.Permission{
+			{
+				Kind:      "project",
+				Namespace: "library",
+				Access: []*types.Policy{
+					{
+						Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+						Action:   rbac.ActionPush,
+					},
+					{
+						Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+						Action:   rbac.ActionPull,
+					},
+				},
+			},
+		},
 	}
 
-	ctx := NewSecurityContext(robot, pm, policies)
-	resource := rbac.NewProjectNamespace(private.Name).Resource(rbac.ResourceRepository)
-	assert.True(t, ctx.Can(rbac.ActionPushPull, resource))
+	ctl := &projecttesting.Controller{}
+	mock.OnAnything(ctl, "Get").Return(private, nil)
+
+	ctx := NewSecurityContext(robot)
+	ctx.ctl = ctl
+	resource := project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+	assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource) && ctx.Can(context.TODO(), rbac.ActionPull, resource))
 }
 
-func TestGetMyProjects(t *testing.T) {
-	ctx := NewSecurityContext(nil, nil, nil)
-	projects, err := ctx.GetMyProjects()
-	require.Nil(t, err)
-	assert.Nil(t, projects)
+func Test_filterRobotPolicies(t *testing.T) {
+	type args struct {
+		p        *proModels.Project
+		policies []*types.Policy
+	}
+	tests := []struct {
+		name string
+		args args
+		want []*types.Policy
+	}{
+		{
+			"policies of one project",
+			args{
+				&proModels.Project{ProjectID: 1},
+				[]*types.Policy{
+					{Resource: "/project/1/repository", Action: "pull", Effect: "allow"},
+				},
+			},
+			[]*types.Policy{
+				{Resource: "/project/1/repository", Action: "pull", Effect: "allow"},
+			},
+		},
+		{
+			"policies of multi projects",
+			args{
+				&proModels.Project{ProjectID: 1},
+				[]*types.Policy{
+					{Resource: "/project/1/repository", Action: "pull", Effect: "allow"},
+					{Resource: "/project/2/repository", Action: "pull", Effect: "allow"},
+				},
+			},
+			[]*types.Policy{
+				{Resource: "/project/1/repository", Action: "pull", Effect: "allow"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := filterRobotPolicies(tt.args.p, tt.args.policies); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("filterRobotPolicies() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
-func TestGetProjectRoles(t *testing.T) {
-	ctx := NewSecurityContext(nil, nil, nil)
-	roles := ctx.GetProjectRoles("test")
-	assert.Nil(t, roles)
+func Test_getPolicyResource(t *testing.T) {
+	type args struct {
+		perm *robot.Permission
+		poli *types.Policy
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			"project resource",
+			args{
+				&robot.Permission{
+					Kind:      "project",
+					Namespace: "library",
+					Access: []*types.Policy{
+						{
+							Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+							Action:   rbac.ActionPush,
+						},
+						{
+							Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+							Action:   rbac.ActionPull,
+						},
+					},
+					Scope: fmt.Sprintf("/project/%d", private.ProjectID),
+				},
+				&types.Policy{Resource: "project", Action: "pull", Effect: "allow"},
+			},
+			fmt.Sprintf("/project/%d", private.ProjectID),
+		},
+		{
+			"project resource",
+			args{
+				&robot.Permission{
+					Kind:      "project",
+					Namespace: "library",
+					Access: []*types.Policy{
+						{
+							Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+							Action:   rbac.ActionPush,
+						},
+						{
+							Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+							Action:   rbac.ActionPull,
+						},
+					},
+					Scope: fmt.Sprintf("/project/%d", private.ProjectID),
+				},
+				&types.Policy{Resource: "repository", Action: "get", Effect: "allow"},
+			},
+			fmt.Sprintf("/project/%d/repository", private.ProjectID),
+		},
+		{
+			"system resource",
+			args{
+				&robot.Permission{
+					Kind:      "project",
+					Namespace: "library",
+					Access: []*types.Policy{
+						{
+							Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+							Action:   rbac.ActionPush,
+						},
+						{
+							Resource: rbac.Resource(fmt.Sprintf("project/%d/repository", private.ProjectID)),
+							Action:   rbac.ActionPull,
+						},
+					},
+					Scope: "/system",
+				},
+				&types.Policy{Resource: "repository", Action: "get", Effect: "allow"},
+			},
+			"/system/repository",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getPolicyResource(tt.args.perm, tt.args.poli); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("getPolicyResource() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

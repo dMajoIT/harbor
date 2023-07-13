@@ -12,44 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { NgModule } from '@angular/core';
-import { RouterModule } from '@angular/router';
-
-import { CoreModule } from '../core/core.module';
+import { RouterModule, Routes } from '@angular/router';
 import { SharedModule } from '../shared/shared.module';
-import { RepositoryModule } from '../repository/repository.module';
-
-import { PasswordSettingComponent } from './password-setting/password-setting.component';
-import { AccountSettingsModalComponent } from './account-settings/account-settings-modal.component';
 import { SignUpComponent } from './sign-up/sign-up.component';
-import { ForgotPasswordComponent } from './password-setting/forgot-password/forgot-password.component';
-import { ResetPasswordComponent } from './password-setting/reset-password/reset-password.component';
 import { SignUpPageComponent } from './sign-up/sign-up-page.component';
-import { PasswordSettingService } from './password-setting/password-setting.service';
-import { AccountSettingsModalService } from './account-settings/account-settings-modal-service.service';
+import { SignInComponent } from './sign-in/sign-in.component';
+import { SignInGuard } from '../shared/router-guard/sign-in-guard-activate.service';
+import { TopRepoService } from './sign-in/top-repo/top-repository.service';
+import { TopRepoComponent } from './sign-in/top-repo/top-repo.component';
 
-
+const routes: Routes = [
+    {
+        path: 'sign-in',
+        canActivate: [SignInGuard],
+        component: SignInComponent,
+    },
+];
 @NgModule({
-  imports: [
-    CoreModule,
-    RouterModule,
-    SharedModule,
-    RepositoryModule
-  ],
-  declarations: [
-    PasswordSettingComponent,
-    AccountSettingsModalComponent,
-    SignUpComponent,
-    ForgotPasswordComponent,
-    ResetPasswordComponent,
-    SignUpPageComponent],
-  exports: [
-    PasswordSettingComponent,
-    AccountSettingsModalComponent,
-    ForgotPasswordComponent,
-    ResetPasswordComponent,
-    SignUpComponent,
-    SignUpPageComponent],
-
-  providers: [PasswordSettingService, AccountSettingsModalService]
+    imports: [RouterModule.forChild(routes), SharedModule],
+    declarations: [
+        SignUpComponent,
+        SignUpPageComponent,
+        SignInComponent,
+        TopRepoComponent,
+    ],
+    providers: [TopRepoService],
 })
-export class AccountModule { }
+export class AccountModule {}

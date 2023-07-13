@@ -17,6 +17,7 @@ package sample
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -31,6 +32,11 @@ func (j *Job) MaxFails() uint {
 	return 3
 }
 
+// MaxCurrency is implementation of same method in Interface.
+func (j *Job) MaxCurrency() uint {
+	return 1
+}
+
 // ShouldRetry ...
 func (j *Job) ShouldRetry() bool {
 	return true
@@ -38,7 +44,7 @@ func (j *Job) ShouldRetry() bool {
 
 // Validate is implementation of same method in Interface.
 func (j *Job) Validate(params job.Parameters) error {
-	if params == nil || len(params) == 0 {
+	if len(params) == 0 {
 		return errors.New("parameters required for replication job")
 	}
 	name, ok := params["image"]
@@ -67,13 +73,20 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 		fmt.Printf("Get prop form context: sample=%s\n", v)
 	}
 
-	ctx.Checkin("progress data: %30")
+	// For failure case
+	if len(os.Getenv("JOB_FAILED")) > 0 {
+		<-time.After(3 * time.Second)
+		logger.Info("Job exit with error because `JOB_FAILED` env is set")
+		return errors.New("`JOB_FAILED` env is set")
+	}
+
+	_ = ctx.Checkin("progress data: %30")
 	<-time.After(1 * time.Second)
-	ctx.Checkin("progress data: %60")
+	_ = ctx.Checkin("progress data: %60")
 
 	// HOLD ON FOR A WHILE
-	logger.Warning("Holding for 10 seconds")
-	<-time.After(10 * time.Second)
+	logger.Warning("Holding for 30 seconds")
+	<-time.After(30 * time.Second)
 
 	if cmd, ok := ctx.OPCommand(); ok {
 		if cmd == job.StopCommand {

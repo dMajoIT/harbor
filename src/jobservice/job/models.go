@@ -15,8 +15,12 @@
 package job
 
 import (
+	"encoding/json"
+
+	"github.com/goharbor/harbor/src/jobservice/config"
+
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
-	"github.com/pkg/errors"
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
 // Parameters for job execution.
@@ -67,6 +71,25 @@ type StatsInfo struct {
 	UpstreamJobID string     `json:"upstream_job_id,omitempty"`   // Ref the upstream job if existing
 	NumericPID    int64      `json:"numeric_policy_id,omitempty"` // The numeric policy ID of the periodic job
 	Parameters    Parameters `json:"parameters,omitempty"`
+	Revision      int64      `json:"revision,omitempty"` // For differentiating the each retry of the same job
+	HookAck       *ACK       `json:"ack,omitempty"`
+}
+
+// ACK is the acknowledge of hook event
+type ACK struct {
+	Status    string `json:"status"`
+	Revision  int64  `json:"revision"`
+	CheckInAt int64  `json:"check_in_at"`
+}
+
+// JSON of ACK.
+func (a *ACK) JSON() string {
+	str, err := json.Marshal(a)
+	if err != nil {
+		return ""
+	}
+
+	return string(str)
 }
 
 // ActionRequest defines for triggering job action like stop/cancel.
@@ -86,6 +109,7 @@ type StatusChange struct {
 type SimpleStatusChange struct {
 	JobID        string `json:"job_id"`
 	TargetStatus string `json:"target_status"`
+	Revision     int64  `json:"revision"`
 }
 
 // Validate the job stats
@@ -130,4 +154,9 @@ func (st *Stats) Validate() error {
 	}
 
 	return nil
+}
+
+// Config job service config
+type Config struct {
+	RedisPoolConfig *config.RedisPoolConfig `json:"redis_pool_config"`
 }

@@ -16,9 +16,10 @@ package test
 
 import (
 	"fmt"
-	"io/ioutil"
+	"html"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path"
 	"runtime"
 	"strings"
@@ -60,12 +61,12 @@ func (t *tokenHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if reqUsername == t.username && reqPasswd == t.password {
 			serveToken(rw)
 		} else {
-			http.Error(rw, fmt.Sprintf("invalid username/password %s/%s", reqUsername, reqPasswd), http.StatusUnauthorized)
+			http.Error(rw, fmt.Sprintf("invalid username/password %s/%s", html.EscapeString(reqUsername), html.EscapeString(reqPasswd)), http.StatusUnauthorized)
 		}
 	} else if gt == "client_credentials" {
 		serveToken(rw)
 	} else {
-		http.Error(rw, fmt.Sprintf("invalid grant_type: %s", gt), http.StatusBadRequest)
+		http.Error(rw, fmt.Sprintf("invalid grant_type: %s", html.EscapeString(gt)), http.StatusBadRequest)
 		return
 	}
 }
@@ -75,7 +76,7 @@ func serveToken(rw http.ResponseWriter) {
 }
 
 func serveJSONFile(rw http.ResponseWriter, filename string) {
-	data, err := ioutil.ReadFile(path.Join(currPath(), filename))
+	data, err := os.ReadFile(path.Join(currPath(), filename))
 	if err != nil {
 		panic(err)
 	}
@@ -130,7 +131,7 @@ func (su *searchUserHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request
 		http.Error(rw, "invalid request", http.StatusBadRequest)
 		return
 	}
-	http.Error(rw, fmt.Sprintf("Invalid request, elements: %v", elements), http.StatusBadRequest)
+	http.Error(rw, html.EscapeString(fmt.Sprintf("Invalid request, elements: %v", elements)), http.StatusBadRequest)
 }
 
 // NewMockServer ...
@@ -142,7 +143,7 @@ func NewMockServer(cfg *MockServerConfig) *httptest.Server {
 		cfg.Username,
 		cfg.Password,
 	})
-	token, err := ioutil.ReadFile(path.Join(currPath(), "./good-access-token.txt"))
+	token, err := os.ReadFile(path.Join(currPath(), "./good-access-token.txt"))
 	if err != nil {
 		panic(err)
 	}

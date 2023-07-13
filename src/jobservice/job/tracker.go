@@ -17,21 +17,22 @@ package job
 import (
 	"context"
 	"encoding/json"
-	"github.com/goharbor/harbor/src/jobservice/common/query"
+	"strconv"
+	"time"
+
+	"github.com/gomodule/redigo/redis"
+
+	"github.com/goharbor/harbor/src/jobservice/common/list"
 	"github.com/goharbor/harbor/src/jobservice/common/rds"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/errs"
 	"github.com/goharbor/harbor/src/jobservice/logger"
-	"github.com/gomodule/redigo/redis"
-	"github.com/pkg/errors"
-	"math/rand"
-	"strconv"
-	"time"
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
 const (
-	// Try best to keep the job stats data but anyway clear it after a long time
-	statDataExpireTime = 180 * 24 * 3600
+	// Check in data placeholder for saving data space
+	redundantCheckInData = "[REDUNDANT]"
 )
 
 // Tracker is designed to track the life cycle of the job described by the stats
@@ -66,15 +67,6 @@ type Tracker interface {
 	//  error if update failed
 	Update(fieldAndValues ...interface{}) error
 
-	// Executions returns the executions of the job tracked by this tracker.
-	// Please pay attention, this only for periodic job.
-	//
-	// Returns:
-	//   job execution IDs matched the query
-	//   the total number
-	//   error if any issues happened
-	Executions(q *query.Parameter) ([]string, int64, error)
-
 	// NumericID returns the numeric ID of periodic job.
 	// Please pay attention, this only for periodic job.
 	NumericID() (int64, error)
@@ -92,9 +84,6 @@ type Tracker interface {
 	// The current status of job
 	Status() (Status, error)
 
-	// Expire the job stats data
-	Expire() error
-
 	// Switch status to running
 	Run() error
 
@@ -106,6 +95,12 @@ type Tracker interface {
 
 	// Switch the status to success
 	Succeed() error
+
+	// Reset the status to `pending`
+	Reset() error
+
+	// Fire status hook to report the current status
+	FireHook() error
 }
 
 // basicTracker implements Tracker interface based on redis
@@ -116,6 +111,7 @@ type basicTracker struct {
 	jobID     string
 	jobStats  *Stats
 	callback  HookCallback
+	retryList *list.SyncList
 }
 
 // NewBasicTrackerWithID builds a tracker with the provided job ID
@@ -125,6 +121,7 @@ func NewBasicTrackerWithID(
 	ns string,
 	pool *redis.Pool,
 	callback HookCallback,
+	retryList *list.SyncList,
 ) Tracker {
 	return &basicTracker{
 		namespace: ns,
@@ -132,6 +129,7 @@ func NewBasicTrackerWithID(
 		pool:      pool,
 		jobID:     jobID,
 		callback:  callback,
+		retryList: retryList,
 	}
 }
 
@@ -142,6 +140,7 @@ func NewBasicTrackerWithStats(
 	ns string,
 	pool *redis.Pool,
 	callback HookCallback,
+	retryList *list.SyncList,
 ) Tracker {
 	return &basicTracker{
 		namespace: ns,
@@ -150,6 +149,7 @@ func NewBasicTrackerWithStats(
 		jobStats:  stats,
 		jobID:     stats.Info.JobID,
 		callback:  callback,
+		retryList: retryList,
 	}
 }
 
@@ -231,90 +231,14 @@ func (bt *basicTracker) CheckIn(message string) error {
 	current := Status(bt.jobStats.Info.Status)
 
 	bt.refresh(current, message)
-	err := bt.fireHookEvent(current, message)
-	err = bt.Update(
-		"check_in", message,
+	errFireHE := bt.fireHookEvent(current, message)
+	err := bt.Update(
+		// skip checkin data here
 		"check_in_at", now,
 		"update_time", now,
 	)
-
-	return err
-}
-
-// Executions of the tracked job
-func (bt *basicTracker) Executions(q *query.Parameter) ([]string, int64, error) {
-	if bt.jobStats.Info.JobKind != KindPeriodic {
-		return nil, 0, errors.New("only periodic job has executions")
-	}
-
-	conn := bt.pool.Get()
-	defer func() {
-		_ = conn.Close()
-	}()
-
-	key := rds.KeyUpstreamJobAndExecutions(bt.namespace, bt.jobID)
-
-	// Query executions by "non stopped"
-	if nonStoppedOnly, ok := q.Extras.Get(query.ExtraParamKeyNonStoppedOnly); ok {
-		if v, yes := nonStoppedOnly.(bool); yes && v {
-			return queryExecutions(conn, key, q)
-		}
-	}
-
-	// Pagination
-	var pageNumber, pageSize uint = 1, query.DefaultPageSize
-	if q != nil {
-		if q.PageNumber > 0 {
-			pageNumber = q.PageNumber
-		}
-		if q.PageSize > 0 {
-			pageSize = q.PageSize
-		}
-	}
-
-	// Get total first
-	total, err := redis.Int64(conn.Do("ZCARD", key))
 	if err != nil {
-		return nil, 0, err
-	}
-
-	// No items
-	result := make([]string, 0)
-	if total == 0 || (int64)((pageNumber-1)*pageSize) >= total {
-		return result, total, nil
-	}
-
-	min, max := (pageNumber-1)*pageSize, pageNumber*pageSize-1
-	args := []interface{}{key, min, max}
-	list, err := redis.Values(conn.Do("ZREVRANGE", args...))
-	if err != nil {
-		return nil, 0, err
-	}
-
-	for _, item := range list {
-		if eID, ok := item.([]byte); ok {
-			result = append(result, string(eID))
-		}
-	}
-
-	return result, total, nil
-}
-
-// Expire job stats
-func (bt *basicTracker) Expire() error {
-	conn := bt.pool.Get()
-	defer func() {
-		_ = conn.Close()
-	}()
-
-	key := rds.KeyJobStats(bt.namespace, bt.jobID)
-	num, err := conn.Do("EXPIRE", key, statDataExpireTime)
-	if err != nil {
-		return err
-	}
-
-	if num == 0 {
-		return errors.Errorf("job stats for expiring %s does not exist", bt.jobID)
+		return errors.Wrap(err, errFireHE.Error())
 	}
 
 	return nil
@@ -323,60 +247,44 @@ func (bt *basicTracker) Expire() error {
 // Run job
 // Either one is failed, the final return will be marked as failed.
 func (bt *basicTracker) Run() error {
-	err := bt.compareAndSet(RunningStatus)
-	if !errs.IsStatusMismatchError(err) {
-		bt.refresh(RunningStatus)
-		if er := bt.fireHookEvent(RunningStatus); err == nil && er != nil {
-			return er
-		}
+	if err := bt.setStatus(RunningStatus); err != nil {
+		return errors.Wrap(err, "run")
 	}
 
-	return err
+	return nil
 }
 
 // Stop job
 // Stop is final status, if failed to do, retry should be enforced.
 // Either one is failed, the final return will be marked as failed.
 func (bt *basicTracker) Stop() error {
-	err := bt.UpdateStatusWithRetry(StoppedStatus)
-	if !errs.IsStatusMismatchError(err) {
-		bt.refresh(StoppedStatus)
-		if er := bt.fireHookEvent(StoppedStatus); err == nil && er != nil {
-			return er
-		}
+	if err := bt.setStatus(StoppedStatus); err != nil {
+		return errors.Wrap(err, "stop")
 	}
 
-	return err
+	return nil
 }
 
 // Fail job
 // Fail is final status, if failed to do, retry should be enforced.
 // Either one is failed, the final return will be marked as failed.
 func (bt *basicTracker) Fail() error {
-	err := bt.UpdateStatusWithRetry(ErrorStatus)
-	if !errs.IsStatusMismatchError(err) {
-		bt.refresh(ErrorStatus)
-		if er := bt.fireHookEvent(ErrorStatus); err == nil && er != nil {
-			return er
-		}
+	if err := bt.setStatus(ErrorStatus); err != nil {
+		return errors.Wrap(err, "fail")
 	}
 
-	return err
+	return nil
 }
 
 // Succeed job
 // Succeed is final status, if failed to do, retry should be enforced.
 // Either one is failed, the final return will be marked as failed.
 func (bt *basicTracker) Succeed() error {
-	err := bt.UpdateStatusWithRetry(SuccessStatus)
-	if !errs.IsStatusMismatchError(err) {
-		bt.refresh(SuccessStatus)
-		if er := bt.fireHookEvent(SuccessStatus); err == nil && er != nil {
-			return er
-		}
+	if err := bt.setStatus(SuccessStatus); err != nil {
+		return errors.Wrap(err, "succeed")
 	}
 
-	return err
+	return nil
 }
 
 // Save the stats of job tracked by this tracker
@@ -411,7 +319,7 @@ func (bt *basicTracker) Save() (err error) {
 	)
 	if stats.Info.CheckInAt > 0 && !utils.IsEmptyStr(stats.Info.CheckIn) {
 		args = append(args,
-			"check_in", stats.Info.CheckIn,
+			"check_in", redundantCheckInData, // use data placeholder for saving space
 			"check_in_at", stats.Info.CheckInAt,
 		)
 	}
@@ -430,25 +338,26 @@ func (bt *basicTracker) Save() (err error) {
 	}
 	// Set update timestamp
 	args = append(args, "update_time", time.Now().Unix())
+	// Set the first revision if it is not set.
+	rev := time.Now().Unix()
+	if stats.Info.Revision > 0 {
+		rev = stats.Info.Revision
+	}
+	args = append(args, "revision", rev)
+
+	// For restoring if ACK is not nil.
+	if stats.Info.HookAck != nil {
+		ack := stats.Info.HookAck.JSON()
+		if len(ack) > 0 {
+			args = append(args, "ack")
+		}
+	}
 
 	// Do it in a transaction
 	err = conn.Send("MULTI")
 	err = conn.Send("HMSET", args...)
-
-	// If job kind is periodic job, expire time should not be set
-	// If job kind is scheduled job, expire time should be runAt+
-	if stats.Info.JobKind != KindPeriodic {
-		var expireTime int64 = statDataExpireTime
-		if stats.Info.JobKind == KindScheduled {
-			nowTime := time.Now().Unix()
-			future := stats.Info.RunAt - nowTime
-			if future > 0 {
-				expireTime += future
-			}
-		}
-		expireTime += rand.Int63n(15) // Avoid lots of keys being expired at the same time
-		err = conn.Send("EXPIRE", key, expireTime)
-	}
+	// Set inprogress track lock
+	err = conn.Send("HSET", rds.KeyJobTrackInProgress(bt.namespace), stats.Info.JobID, 2)
 
 	// Link with its upstream job if upstream job ID exists for future querying
 	if !utils.IsEmptyStr(stats.Info.UpstreamJobID) {
@@ -473,15 +382,70 @@ func (bt *basicTracker) Save() (err error) {
 func (bt *basicTracker) UpdateStatusWithRetry(targetStatus Status) error {
 	err := bt.compareAndSet(targetStatus)
 	if err != nil {
-		// Status mismatching error will be ignored
+		// Status mismatching error will be directly ignored as the status has already been outdated
 		if !errs.IsStatusMismatchError(err) {
-			// Push to the retrying Q
-			if er := bt.pushToQueueForRetry(targetStatus); er != nil {
-				logger.Errorf("push job status update request to retry queue error: %s", er)
-				// If failed to put it into the retrying Q in case, let's downgrade to retry in current process
-				// by recursively call in goroutines.
-				bt.retryUpdateStatus(targetStatus)
+			// Push to the retrying daemon
+			bt.retryList.Push(SimpleStatusChange{
+				JobID:        bt.jobID,
+				TargetStatus: targetStatus.String(),
+				Revision:     bt.jobStats.Info.Revision,
+			})
+		}
+	}
+
+	return err
+}
+
+// Reset the job status to `pending` and update the revision.
+// Usually for the retry jobs
+func (bt *basicTracker) Reset() error {
+	conn := bt.pool.Get()
+	defer func() {
+		closeConn(conn)
+	}()
+
+	now := time.Now().Unix()
+	if _, err := rds.StatusResetScript.Do(
+		conn,
+		rds.KeyJobStats(bt.namespace, bt.jobStats.Info.JobID),
+		rds.KeyJobTrackInProgress(bt.namespace),
+		bt.jobStats.Info.JobID,
+		PendingStatus.String(),
+		now,
+	); err != nil {
+		return errors.Wrap(err, "reset")
+	}
+
+	// Sync current tracker
+	bt.jobStats.Info.Status = PendingStatus.String()
+	bt.jobStats.Info.Revision = now
+	bt.jobStats.Info.UpdateTime = now
+	bt.jobStats.Info.CheckIn = ""
+	bt.jobStats.Info.CheckInAt = 0
+
+	return nil
+}
+
+// FireHook fires status hook event to report current status
+func (bt *basicTracker) FireHook() error {
+	return bt.fireHookEvent(
+		Status(bt.jobStats.Info.Status),
+		bt.jobStats.Info.CheckIn,
+	)
+}
+
+// setStatus sets the job status to the target status and fire status change hook
+func (bt *basicTracker) setStatus(status Status) error {
+	err := bt.UpdateStatusWithRetry(status)
+	if !errs.IsStatusMismatchError(err) {
+		bt.refresh(status)
+		if er := bt.fireHookEvent(status); er != nil {
+			// Add more error context
+			if err != nil {
+				return errors.Wrap(er, err.Error())
 			}
+
+			return er
 		}
 	}
 
@@ -526,72 +490,32 @@ func (bt *basicTracker) fireHookEvent(status Status, checkIn ...string) error {
 	return nil
 }
 
-func (bt *basicTracker) pushToQueueForRetry(targetStatus Status) error {
-	simpleStatusChange := &SimpleStatusChange{
-		JobID:        bt.jobID,
-		TargetStatus: targetStatus.String(),
-	}
-
-	rawJSON, err := json.Marshal(simpleStatusChange)
-	if err != nil {
-		return err
-	}
-
-	conn := bt.pool.Get()
-	defer func() {
-		_ = conn.Close()
-	}()
-
-	key := rds.KeyStatusUpdateRetryQueue(bt.namespace)
-	args := []interface{}{key, "NX", time.Now().Unix(), rawJSON}
-
-	_, err = conn.Do("ZADD", args...)
-
-	return err
-}
-
-func (bt *basicTracker) retryUpdateStatus(targetStatus Status) {
-	go func() {
-		select {
-		case <-time.After(time.Duration(5)*time.Minute + time.Duration(rand.Int31n(13))*time.Second):
-			// Check the update timestamp
-			if time.Now().Unix()-bt.jobStats.Info.UpdateTime < statDataExpireTime-24*3600 {
-				if err := bt.compareAndSet(targetStatus); err != nil {
-					logger.Errorf("Retry to update job status error: %s", err)
-					bt.retryUpdateStatus(targetStatus)
-				}
-				// Success
-			}
-			return
-		case <-bt.context.Done():
-			return // terminated
-		}
-	}()
-}
-
 func (bt *basicTracker) compareAndSet(targetStatus Status) error {
 	conn := bt.pool.Get()
 	defer func() {
-		_ = conn.Close()
+		closeConn(conn)
 	}()
 
 	rootKey := rds.KeyJobStats(bt.namespace, bt.jobID)
-
-	st, err := getStatus(conn, rootKey)
+	trackKey := rds.KeyJobTrackInProgress(bt.namespace)
+	reply, err := redis.String(rds.SetStatusScript.Do(
+		conn,
+		rootKey,
+		trackKey,
+		targetStatus.String(),
+		bt.jobStats.Info.Revision,
+		time.Now().Unix(),
+		bt.jobID,
+	))
 	if err != nil {
-		return err
+		return errors.Wrap(err, "compare and set status error")
 	}
 
-	diff := st.Compare(targetStatus)
-	if diff > 0 {
-		return errs.StatusMismatchError(st.String(), targetStatus.String())
-	}
-	if diff == 0 {
-		// Desired matches actual
-		return nil
+	if reply != "ok" {
+		return errs.StatusMismatchError(reply, targetStatus.String())
 	}
 
-	return setStatus(conn, rootKey, targetStatus)
+	return nil
 }
 
 // retrieve the stats of job tracked by this tracker from the backend data
@@ -604,10 +528,14 @@ func (bt *basicTracker) retrieve() error {
 	key := rds.KeyJobStats(bt.namespace, bt.jobID)
 	vals, err := redis.Strings(conn.Do("HGETALL", key))
 	if err != nil {
+		if errors.Is(err, redis.ErrNil) {
+			return errs.NoObjectFoundError(bt.jobID)
+		}
+
 		return err
 	}
 
-	if vals == nil || len(vals) == 0 {
+	if len(vals) == 0 {
 		return errs.NoObjectFoundError(bt.jobID)
 	}
 
@@ -621,10 +549,8 @@ func (bt *basicTracker) retrieve() error {
 		switch prop {
 		case "id":
 			res.Info.JobID = value
-			break
 		case "name":
 			res.Info.JobName = value
-			break
 		case "kind":
 			res.Info.JobKind = value
 		case "unique":
@@ -635,51 +561,44 @@ func (bt *basicTracker) retrieve() error {
 			res.Info.IsUnique = v
 		case "status":
 			res.Info.Status = value
-			break
 		case "ref_link":
 			res.Info.RefLink = value
-			break
 		case "enqueue_time":
-			v, _ := strconv.ParseInt(value, 10, 64)
-			res.Info.EnqueueTime = v
-			break
+			res.Info.EnqueueTime = parseInt64(value)
 		case "update_time":
-			v, _ := strconv.ParseInt(value, 10, 64)
-			res.Info.UpdateTime = v
-			break
+			res.Info.UpdateTime = parseInt64(value)
 		case "run_at":
-			v, _ := strconv.ParseInt(value, 10, 64)
-			res.Info.RunAt = v
-			break
+			res.Info.RunAt = parseInt64(value)
 		case "check_in_at":
-			v, _ := strconv.ParseInt(value, 10, 64)
-			res.Info.CheckInAt = v
-			break
+			res.Info.CheckInAt = parseInt64(value)
 		case "check_in":
-			res.Info.CheckIn = value
-			break
+			res.Info.CheckIn = "" // never read checkin placeholder data
 		case "cron_spec":
 			res.Info.CronSpec = value
-			break
 		case "web_hook_url":
 			res.Info.WebHookURL = value
-			break
 		case "die_at":
-			v, _ := strconv.ParseInt(value, 10, 64)
-			res.Info.DieAt = v
+			res.Info.DieAt = parseInt64(value)
 		case "upstream_job_id":
 			res.Info.UpstreamJobID = value
-			break
 		case "numeric_policy_id":
-			v, _ := strconv.ParseInt(value, 10, 64)
-			res.Info.NumericPID = v
-			break
+			res.Info.NumericPID = parseInt64(value)
 		case "parameters":
 			params := make(Parameters)
 			if err := json.Unmarshal([]byte(value), &params); err == nil {
 				res.Info.Parameters = params
+			} else {
+				logger.Error(errors.Wrap(err, "retrieve: tracker"))
 			}
-			break
+		case "revision":
+			res.Info.Revision = parseInt64(value)
+		case "ack":
+			ack := &ACK{}
+			if err := json.Unmarshal([]byte(value), ack); err == nil {
+				res.Info.HookAck = ack
+			} else {
+				logger.Error(errors.Wrap(err, "retrieve: tracker"))
+			}
 		default:
 			break
 		}
@@ -693,7 +612,7 @@ func (bt *basicTracker) retrieve() error {
 func getStatus(conn redis.Conn, key string) (Status, error) {
 	values, err := rds.HmGet(conn, key, "status")
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(err, "get status error")
 	}
 
 	if len(values) == 1 {
@@ -706,43 +625,20 @@ func getStatus(conn redis.Conn, key string) (Status, error) {
 	return "", errors.New("malformed status data returned")
 }
 
-func setStatus(conn redis.Conn, key string, status Status) error {
-	return rds.HmSet(conn, key, "status", status.String(), "update_time", time.Now().Unix())
-}
-
-// queryExecutions queries periodic executions by status
-func queryExecutions(conn redis.Conn, dataKey string, q *query.Parameter) ([]string, int64, error) {
-	total, err := redis.Int64(conn.Do("ZCOUNT", dataKey, 0, "+inf"))
-	if err != nil {
-		return nil, 0, err
-	}
-
-	var pageNumber, pageSize uint = 1, query.DefaultPageSize
-	if q.PageNumber > 0 {
-		pageNumber = q.PageNumber
-	}
-	if q.PageSize > 0 {
-		pageSize = q.PageSize
-	}
-
-	results := make([]string, 0)
-	if total == 0 || (int64)((pageNumber-1)*pageSize) >= total {
-		return results, total, nil
-	}
-
-	offset := (pageNumber - 1) * pageSize
-	args := []interface{}{dataKey, "+inf", 0, "LIMIT", offset, pageSize}
-
-	eIDs, err := redis.Values(conn.Do("ZREVRANGEBYSCORE", args...))
-	if err != nil {
-		return nil, 0, err
-	}
-
-	for _, eID := range eIDs {
-		if eIDBytes, ok := eID.([]byte); ok {
-			results = append(results, string(eIDBytes))
+func closeConn(conn redis.Conn) {
+	if conn != nil {
+		if err := conn.Close(); err != nil {
+			logger.Errorf("Close redis connection failed with error: %s", err)
 		}
 	}
+}
 
-	return results, total, nil
+func parseInt64(v string) int64 {
+	intV, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		logger.Errorf("Parse int64 error: %s", err)
+		return 0
+	}
+
+	return intV
 }

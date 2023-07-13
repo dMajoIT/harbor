@@ -18,18 +18,31 @@ Resource  ../../resources/Util.robot
 
 *** Keywords ***
 View Repo Scan Details
+    [Arguments]  @{vulnerabilities_level}
     Retry Element Click  xpath=${first_repo_xpath}
-    Capture Page Screenshot  viewcve1.png
-    Retry Wait Until Page Contains  unknown
-    Retry Wait Until Page Contains  high
-    Retry Wait Until Page Contains  medium
-    Retry Wait Until Page Contains  CVE
+    FOR  ${item}  IN  @{vulnerabilities_level}
+        Retry Wait Until Page Contains Element  //hbr-artifact-vulnerabilities//clr-dg-row[contains(.,'${item}')]
+    END
     Retry Element Click  xpath=${build_history_btn}
     Retry Wait Until Page Contains Element  xpath=${build_history_data}
 
 View Scan Error Log
     Retry Wait Until Page Contains  View Log
     Retry Element Click  xpath=${view_log_xpath}
-    Capture Page Screenshot  viewlog.png
 
+Scan Artifact
+    [Arguments]  ${project}  ${repo}  ${label_xpath}=//clr-dg-row//label[1]
+    Go Into Repo  ${project}  ${repo}
+    Retry Element Click  ${label_xpath}
+    Retry Element Click  ${scan_artifact_btn}
 
+Stop Scan Artifact
+    Retry Element Click  ${stop_scan_artifact_btn}
+
+Check Scan Artifact Job Status Is Stopped
+    Wait Until Element Is Visible  ${stopped_label}
+    ${job_status}=  Get Text  ${stopped_label}
+    Should Be Equal As Strings  '${job_status}'  'Scan stopped'
+
+Refresh Repositories
+    Retry Element Click  ${refresh_repositories_xpath}

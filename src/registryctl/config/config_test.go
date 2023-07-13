@@ -15,9 +15,9 @@
 package config
 
 import (
-	"os"
 	"testing"
 
+	_ "github.com/docker/distribution/registry/storage/driver/filesystem"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,9 +28,9 @@ func TestConfigDoesNotExists(t *testing.T) {
 }
 
 func TestConfigLoadingWithEnv(t *testing.T) {
-	os.Setenv("REGISTRYCTL_PROTOCOL", "https")
-	os.Setenv("PORT", "1000")
-	os.Setenv("LOG_LEVEL", "DEBUG")
+	t.Setenv("REGISTRYCTL_PROTOCOL", "https")
+	t.Setenv("PORT", "1000")
+	t.Setenv("LOG_LEVEL", "DEBUG")
 
 	cfg := &Configuration{}
 	err := cfg.Load("../config_test.yml", true)
@@ -38,6 +38,7 @@ func TestConfigLoadingWithEnv(t *testing.T) {
 	assert.Equal(t, "https", cfg.Protocol)
 	assert.Equal(t, "1000", cfg.Port)
 	assert.Equal(t, "DEBUG", cfg.LogLevel)
+	assert.Equal(t, "../reg_conf_test.yml", cfg.RegistryConfig)
 }
 
 func TestConfigLoadingWithYml(t *testing.T) {
@@ -47,6 +48,8 @@ func TestConfigLoadingWithYml(t *testing.T) {
 	assert.Equal(t, "http", cfg.Protocol)
 	assert.Equal(t, "1234", cfg.Port)
 	assert.Equal(t, "ERROR", cfg.LogLevel)
+	assert.Equal(t, "../reg_conf_test.yml", cfg.RegistryConfig)
+	assert.True(t, cfg.StorageDriver.Name() == "filesystem")
 }
 
 func TestGetLogLevel(t *testing.T) {
@@ -56,11 +59,11 @@ func TestGetLogLevel(t *testing.T) {
 }
 
 func TestGetJobAuthSecret(t *testing.T) {
-	os.Setenv("JOBSERVICE_SECRET", "test_job_secret")
+	t.Setenv("JOBSERVICE_SECRET", "test_job_secret")
 	assert.Equal(t, "test_job_secret", GetJobAuthSecret())
 }
 
 func TestGetUIAuthSecret(t *testing.T) {
-	os.Setenv("CORE_SECRET", "test_core_secret")
+	t.Setenv("CORE_SECRET", "test_core_secret")
 	assert.Equal(t, "test_core_secret", GetUIAuthSecret())
 }

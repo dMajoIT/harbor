@@ -11,34 +11,131 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { Component } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { Title } from '@angular/platform-browser';
-
 import { TranslateService } from '@ngx-translate/core';
-import { CookieService } from 'ngx-cookie';
-
-import { SessionService } from './shared/session.service';
-import { AppConfigService } from './app-config.service';
+import { AppConfigService } from './services/app-config.service';
+import { ThemeService } from './services/theme.service';
+import {
+    CustomStyle,
+    HAS_STYLE_MODE,
+    THEME_ARRAY,
+    ThemeInterface,
+} from './services/theme';
+import { clone } from './shared/units/utils';
+import {
+    DEFAULT_LANG_LOCALSTORAGE_KEY,
+    DeFaultLang,
+    supportedLangs,
+    SupportedLanguage,
+} from './shared/entities/shared.const';
+import { SkinableConfig } from './services/skinable-config.service';
+import { isSupportedLanguage } from './shared/units/shared.utils';
+import {
+    CHECK_HEALTH_INTERVAL,
+    JobServiceDashboardHealthCheckService,
+} from './base/left-side-nav/job-service-dashboard/job-service-dashboard-health-check.service';
+import { SessionService } from './shared/services/session.service';
 
 @Component({
     selector: 'harbor-app',
-    templateUrl: 'app.component.html'
+    templateUrl: 'app.component.html',
 })
-export class AppComponent {
+export class AppComponent implements OnInit, OnDestroy {
+    themeArray: ThemeInterface[] = clone(THEME_ARRAY);
+    styleMode: string = this.themeArray[0].showStyle;
+    interval: any;
     constructor(
         private translate: TranslateService,
-        private cookie: CookieService,
-        private session: SessionService,
         private appConfigService: AppConfigService,
-        private titleService: Title) {
+        private titleService: Title,
+        public theme: ThemeService,
+        private skinableConfig: SkinableConfig,
+        private jobServiceDashboardHealthCheckService: JobServiceDashboardHealthCheckService,
+        private sessionService: SessionService
+    ) {
+        // init language
+        this.initLanguage();
         // Override page title
-        let key: string = "APP_TITLE.HARBOR";
-        if (this.appConfigService.isIntegrationMode()) {
-            key = "APP_TITLE.REG";
-        }
-
+        let key: string = 'APP_TITLE.HARBOR';
         translate.get(key).subscribe((res: string) => {
-            this.titleService.setTitle(res);
+            const customSkinData: CustomStyle =
+                this.skinableConfig.getSkinConfig();
+            if (
+                customSkinData &&
+                customSkinData.product &&
+                customSkinData.product.name
+            ) {
+                this.titleService.setTitle(customSkinData.product.name);
+                this.skinableConfig.setTitleIcon();
+            } else {
+                this.titleService.setTitle(res);
+            }
         });
+        this.setTheme();
+    }
+
+    ngOnDestroy(): void {
+        if (this.interval) {
+            clearInterval(this.interval);
+            this.interval = null;
+        }
+    }
+
+    ngOnInit(): void {
+        if (!this.interval) {
+            this.interval = setInterval(() => {
+                if (this.sessionService.getCurrentUser()?.has_admin_role) {
+                    this.jobServiceDashboardHealthCheckService.checkHealth();
+                } else {
+                    this.jobServiceDashboardHealthCheckService.setHealthy(true);
+                }
+            }, CHECK_HEALTH_INTERVAL);
+        }
+    }
+
+    setTheme() {
+        let styleMode = this.themeArray[0].showStyle;
+        const localHasStyle =
+            localStorage && localStorage.getItem(HAS_STYLE_MODE);
+        if (localHasStyle) {
+            styleMode = localStorage.getItem(HAS_STYLE_MODE);
+        } else {
+            localStorage.setItem(HAS_STYLE_MODE, styleMode);
+        }
+        this.themeArray.forEach(themeItem => {
+            if (themeItem.showStyle === styleMode) {
+                this.theme.loadStyle(themeItem.currentFileName);
+            }
+        });
+    }
+    initLanguage() {
+        this.translate.addLangs(supportedLangs);
+        this.translate.setDefaultLang(DeFaultLang);
+        let selectedLang: SupportedLanguage;
+        const savedLang = localStorage.getItem(DEFAULT_LANG_LOCALSTORAGE_KEY);
+        if (isSupportedLanguage(savedLang)) {
+            // If user has selected lang, then directly use it
+            selectedLang = savedLang;
+        } else if (savedLang !== null) {
+            // If there is a saved value, but it is not a supported language, warn and use the default language.
+            console.warn(
+                `Invalid saved language setting ${JSON.stringify(
+                    savedLang
+                )}; defaulting to ${JSON.stringify(DeFaultLang)}.`
+            );
+            selectedLang = DeFaultLang;
+        } else {
+            // If user has not selected lang, then use browser language(if contained in supportedLangs)
+            const browserCultureLang: string = this.translate
+                .getBrowserCultureLang()
+                .toLowerCase();
+            selectedLang = isSupportedLanguage(browserCultureLang)
+                ? browserCultureLang
+                : DeFaultLang;
+        }
+        localStorage.setItem(DEFAULT_LANG_LOCALSTORAGE_KEY, selectedLang);
+        // use method will load related language json from backend server
+        this.translate.use(selectedLang);
     }
 }

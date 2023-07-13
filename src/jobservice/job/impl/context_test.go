@@ -19,15 +19,21 @@ import (
 	"os"
 	"testing"
 
-	comcfg "github.com/goharbor/harbor/src/common/config"
-	"github.com/goharbor/harbor/src/jobservice/common/utils"
-	"github.com/goharbor/harbor/src/jobservice/config"
-	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/jobservice/tests"
 	"github.com/gomodule/redigo/redis"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/common"
+	common_dao "github.com/goharbor/harbor/src/common/dao"
+	"github.com/goharbor/harbor/src/jobservice/common/list"
+	"github.com/goharbor/harbor/src/jobservice/common/utils"
+	"github.com/goharbor/harbor/src/jobservice/config"
+	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/jobservice/tests"
+	libCfg "github.com/goharbor/harbor/src/lib/config"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
+	_ "github.com/goharbor/harbor/src/pkg/config/rest"
 )
 
 // ContextImplTestSuite tests functions of context impl
@@ -42,6 +48,7 @@ type ContextImplTestSuite struct {
 
 // TestContextImplTestSuite is entry of go test
 func TestContextImplTestSuite(t *testing.T) {
+	common_dao.PrepareTestForPostgresSQL()
 	suite.Run(t, new(ContextImplTestSuite))
 }
 
@@ -87,6 +94,7 @@ func (suite *ContextImplTestSuite) SetupSuite() {
 		suite.namespace,
 		suite.pool,
 		nil,
+		list.New(),
 	)
 
 	err := suite.tracker.Save()
@@ -105,9 +113,11 @@ func (suite *ContextImplTestSuite) TearDownSuite() {
 
 // TestContextImpl tests the context impl
 func (suite *ContextImplTestSuite) TestContextImpl() {
-	cfgMem := comcfg.NewInMemoryManager()
-	cfgMem.Set("read_only", "true")
-	ctx := NewContext(context.Background(), cfgMem)
+	cfgMem, err := libCfg.GetManager(common.InMemoryCfgManager)
+	assert.Nil(suite.T(), err)
+	cont := context.Background()
+	cfgMem.Set(cont, "read_only", "true")
+	ctx := NewContext(cont, cfgMem)
 	jCtx, err := ctx.Build(suite.tracker)
 
 	require.NoErrorf(suite.T(), err, "build job context: nil error expected but got %s", err)

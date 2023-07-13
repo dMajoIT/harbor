@@ -18,21 +18,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/goharbor/harbor/src/jobservice/common/query"
-	"github.com/goharbor/harbor/src/jobservice/errs"
-	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/jobservice/worker"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/jobservice/common/query"
+	"github.com/goharbor/harbor/src/jobservice/errs"
+	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/jobservice/worker"
 )
 
 const (
@@ -53,7 +55,7 @@ type APIHandlerTestSuite struct {
 
 // SetupSuite prepares test suite
 func (suite *APIHandlerTestSuite) SetupSuite() {
-	_ = os.Setenv(secretKey, fakeSecret)
+	suite.T().Setenv(secretKey, fakeSecret)
 
 	suite.client = &http.Client{
 		Timeout: 10 * time.Second,
@@ -74,7 +76,6 @@ func (suite *APIHandlerTestSuite) SetupSuite() {
 
 // TearDownSuite clears test suite
 func (suite *APIHandlerTestSuite) TearDownSuite() {
-	_ = os.Unsetenv(secretKey)
 	_ = suite.server.Stop()
 	suite.cancel()
 }
@@ -277,7 +278,7 @@ func (suite *APIHandlerTestSuite) TestGetPeriodicExecutionsWithQuery() {
 }
 
 // TestScheduledJobs ...
-func (suite *APIHandlerTestSuite) TestScheduledJobs() {
+func (suite *APIHandlerTestSuite) TestGetJobs() {
 	q := &query.Parameter{
 		PageNumber: 2,
 		PageSize:   50,
@@ -285,11 +286,20 @@ func (suite *APIHandlerTestSuite) TestScheduledJobs() {
 	}
 
 	fc := &fakeController{}
-	fc.On("ScheduledJobs", q).
-		Return([]*job.Stats{createJobStats("sample", "Generic", "")}, int64(1), nil)
+	fc.On("GetJobs", q).
+		Return([]*job.Stats{createJobStats("sample", job.KindGeneric, "")}, int64(1), nil)
 	suite.controller = fc
 
-	_, code := suite.getReq(fmt.Sprintf("%s/%s", suite.APIAddr, "jobs/scheduled?page_number=2&page_size=50"))
+	_, code := suite.getReq(fmt.Sprintf("%s/%s", suite.APIAddr, "jobs?page_number=2&page_size=50"))
+	assert.Equal(suite.T(), 200, code, "expected 200 ok but got %d", code)
+
+	q.Extras.Set(query.ExtraParamKeyKind, job.KindScheduled)
+	fc = &fakeController{}
+	fc.On("GetJobs", q).
+		Return([]*job.Stats{createJobStats("sample", job.KindScheduled, "")}, int64(1), nil)
+	suite.controller = fc
+
+	_, code = suite.getReq(fmt.Sprintf("%s/%s", suite.APIAddr, "jobs?page_number=2&page_size=50&kind=Scheduled"))
 	assert.Equal(suite.T(), 200, code, "expected 200 ok but got %d", code)
 }
 
@@ -334,7 +344,7 @@ func (suite *APIHandlerTestSuite) postReq(url string, data []byte) ([]byte, int)
 		_ = res.Body.Close()
 	}()
 	if res.ContentLength > 0 {
-		resData, err = ioutil.ReadAll(res.Body)
+		resData, err = io.ReadAll(res.Body)
 		if err != nil {
 			return nil, 0
 		}
@@ -361,7 +371,7 @@ func (suite *APIHandlerTestSuite) getReq(url string) ([]byte, int) {
 		_ = res.Body.Close()
 	}()
 
-	data, err := ioutil.ReadAll(res.Body)
+	data, err := io.ReadAll(res.Body)
 	if err != nil {
 		return nil, 0
 	}
@@ -397,8 +407,8 @@ func (suite *APIHandlerTestSuite) GetPeriodicExecutions(periodicJobID string, qu
 	return suite.controller.GetPeriodicExecutions(periodicJobID, query)
 }
 
-func (suite *APIHandlerTestSuite) ScheduledJobs(query *query.Parameter) ([]*job.Stats, int64, error) {
-	return suite.controller.ScheduledJobs(query)
+func (suite *APIHandlerTestSuite) GetJobs(query *query.Parameter) ([]*job.Stats, int64, error) {
+	return suite.controller.GetJobs(query)
 }
 
 type fakeController struct {
@@ -460,7 +470,7 @@ func (fc *fakeController) GetPeriodicExecutions(periodicJobID string, query *que
 	return args.Get(0).([]*job.Stats), args.Get(1).(int64), nil
 }
 
-func (fc *fakeController) ScheduledJobs(query *query.Parameter) ([]*job.Stats, int64, error) {
+func (fc *fakeController) GetJobs(query *query.Parameter) ([]*job.Stats, int64, error) {
 	args := fc.Called(query)
 	if args.Error(2) != nil {
 		return nil, args.Get(1).(int64), args.Error(2)
