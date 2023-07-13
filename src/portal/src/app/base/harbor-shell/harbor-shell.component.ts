@@ -11,31 +11,45 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { Component, OnInit, ViewChild, OnDestroy } from '@angular/core';
+import {
+    Component,
+    OnInit,
+    ViewChild,
+    OnDestroy,
+    ElementRef,
+    ChangeDetectorRef,
+} from '@angular/core';
 import { Router, ActivatedRoute } from '@angular/router';
-import { Subscription } from "rxjs";
-import { AppConfigService } from '../..//app-config.service';
-
+import { Subscription } from 'rxjs';
+import { AppConfigService } from '../../services/app-config.service';
 import { ModalEvent } from '../modal-event';
 import { modalEvents } from '../modal-events.const';
+import { PasswordSettingComponent } from '../password-setting/password-setting.component';
+import { NavigatorComponent } from '../../shared/components/navigator/navigator.component';
+import { SessionService } from '../../shared/services/session.service';
+import { AboutDialogComponent } from '../../shared/components/about-dialog/about-dialog.component';
+import { SearchTriggerService } from '../../shared/components/global-search/search-trigger.service';
+import {
+    CommonRoutes,
+    CONFIG_AUTH_MODE,
+} from '../../shared/entities/shared.const';
+import { THEME_ARRAY, ThemeInterface } from '../../services/theme';
+import { clone } from '../../shared/units/utils';
+import { ThemeService } from '../../services/theme.service';
+import { AccountSettingsModalComponent } from '../account-settings/account-settings-modal.component';
+import {
+    EventService,
+    HarborEvent,
+} from '../../services/event-service/event.service';
 
-import { AccountSettingsModalComponent } from '../../account/account-settings/account-settings-modal.component';
-import { PasswordSettingComponent } from '../../account/password-setting/password-setting.component';
-import { NavigatorComponent } from '../navigator/navigator.component';
-import { SessionService } from '../../shared/session.service';
-
-import { AboutDialogComponent } from '../../shared/about-dialog/about-dialog.component';
-import { SearchTriggerService } from '../global-search/search-trigger.service';
-import { CommonRoutes } from '../../shared/shared.const';
+const HAS_STYLE_MODE: string = 'styleModeLocal';
 
 @Component({
     selector: 'harbor-shell',
     templateUrl: 'harbor-shell.component.html',
-    styleUrls: ["harbor-shell.component.scss"]
+    styleUrls: ['harbor-shell.component.scss'],
 })
-
 export class HarborShellComponent implements OnInit, OnDestroy {
-
     @ViewChild(AccountSettingsModalComponent)
     accountSettingsModal: AccountSettingsModalComponent;
 
@@ -54,26 +68,69 @@ export class HarborShellComponent implements OnInit, OnDestroy {
 
     searchSub: Subscription;
     searchCloseSub: Subscription;
-
+    themeArray: ThemeInterface[] = clone(THEME_ARRAY);
+    styleMode = this.themeArray[0].showStyle;
+    @ViewChild('scrollDiv') scrollDiv: ElementRef;
+    scrollToPositionSub: Subscription;
     constructor(
         private route: ActivatedRoute,
         private router: Router,
         private session: SessionService,
         private searchTrigger: SearchTriggerService,
-        private appConfigService: AppConfigService) { }
+        private appConfigService: AppConfigService,
+        public theme: ThemeService,
+        private event: EventService,
+        private cd: ChangeDetectorRef
+    ) {}
 
     ngOnInit() {
-        this.searchSub = this.searchTrigger.searchTriggerChan$.subscribe(searchEvt => {
-            if (searchEvt && searchEvt.trim() !== "") {
-                this.isSearchResultsOpened = true;
+        if (!this.scrollToPositionSub) {
+            this.scrollToPositionSub = this.event.subscribe(
+                HarborEvent.SCROLL_TO_POSITION,
+                scrollTop => {
+                    if (this.scrollDiv && this.scrollDiv.nativeElement) {
+                        this.cd.detectChanges();
+                        this.scrollDiv.nativeElement.scrollTop = scrollTop;
+                    }
+                }
+            );
+        }
+        this.searchSub = this.searchTrigger.searchTriggerChan$.subscribe(
+            searchEvt => {
+                if (searchEvt && searchEvt.trim() !== '') {
+                    this.isSearchResultsOpened = true;
+                }
             }
-        });
+        );
 
-        this.searchCloseSub = this.searchTrigger.searchCloseChan$.subscribe(close => {
-           this.isSearchResultsOpened = false;
-        });
+        this.searchCloseSub = this.searchTrigger.searchCloseChan$.subscribe(
+            close => {
+                this.isSearchResultsOpened = false;
+            }
+        );
+        // set local in app
+        if (localStorage) {
+            this.styleMode = localStorage.getItem(HAS_STYLE_MODE);
+        }
+    }
+    isDBAuth(): boolean {
+        if (this.appConfigService?.configurations?.auth_mode) {
+            return (
+                this.appConfigService.configurations.auth_mode ===
+                CONFIG_AUTH_MODE.DB_AUTH
+            );
+        }
+        return true;
     }
 
+    publishScrollEvent() {
+        if (this.scrollDiv && this.scrollDiv.nativeElement) {
+            this.event.publish(HarborEvent.SCROLL, {
+                url: this.router.url,
+                scrollTop: this.scrollDiv.nativeElement.scrollTop,
+            });
+        }
+    }
     ngOnDestroy(): void {
         if (this.searchSub) {
             this.searchSub.unsubscribe();
@@ -82,10 +139,16 @@ export class HarborShellComponent implements OnInit, OnDestroy {
         if (this.searchCloseSub) {
             this.searchCloseSub.unsubscribe();
         }
+        if (this.scrollToPositionSub) {
+            this.scrollToPositionSub.unsubscribe();
+            this.scrollToPositionSub = null;
+        }
     }
 
     public get shouldOverrideContent(): boolean {
-        return this.router.routerState.snapshot.url.toString().startsWith(CommonRoutes.EMBEDDED_SIGN_IN);
+        return this.router.routerState.snapshot.url
+            .toString()
+            .startsWith(CommonRoutes.EMBEDDED_SIGN_IN);
     }
 
     public get showSearch(): boolean {
@@ -97,25 +160,16 @@ export class HarborShellComponent implements OnInit, OnDestroy {
         return account != null && account.has_admin_role;
     }
 
-    public get isLdapMode(): boolean {
-        let appConfig = this.appConfigService.getConfig();
-        return appConfig.auth_mode === 'ldap_auth';
-    }
-
     public get isUserExisting(): boolean {
         let account = this.session.getCurrentUser();
         return account != null;
     }
-
-    public get withClair(): boolean {
-        return this.appConfigService.getConfig().with_clair;
-    }
-
     public get hasAdminRole(): boolean {
-        return this.session.getCurrentUser() &&
-            this.session.getCurrentUser().has_admin_role;
+        return (
+            this.session.getCurrentUser() &&
+            this.session.getCurrentUser().has_admin_role
+        );
     }
-
     // Open modal dialog
     openModal(event: ModalEvent): void {
         switch (event.modalName) {
@@ -130,6 +184,13 @@ export class HarborShellComponent implements OnInit, OnDestroy {
                 break;
             default:
                 break;
+        }
+    }
+    themeChanged(theme) {
+        this.styleMode = theme.mode;
+        this.theme.loadStyle(theme.toggleFileName);
+        if (localStorage) {
+            localStorage.setItem(HAS_STYLE_MODE, this.styleMode);
         }
     }
 }

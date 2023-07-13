@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,20 +16,22 @@ package token
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 
-	"github.com/astaxie/beego"
-	"github.com/goharbor/harbor/src/common/utils/log"
+	"github.com/beego/beego/v2/server/web"
+
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // Handler handles request on /service/token, which is the auth provider for registry.
 type Handler struct {
-	beego.Controller
+	web.Controller
 }
 
 // Get handles GET request, it checks the http header for user credentials
 // and parse service and scope based on docker registry v2 standard,
-// checkes the permission against local DB and generates jwt token.
+// checks the permission against local DB and generates jwt token.
 func (h *Handler) Get() {
 	request := h.Ctx.Request
 	log.Debugf("URL for token request: %s", request.URL.String())
@@ -38,7 +40,7 @@ func (h *Handler) Get() {
 	if !ok {
 		errMsg := fmt.Sprintf("Unable to handle service: %s", service)
 		log.Errorf(errMsg)
-		h.CustomAbort(http.StatusBadRequest, errMsg)
+		h.CustomAbort(http.StatusBadRequest, template.HTMLEscapeString(errMsg))
 	}
 	token, err := tokenCreator.Create(request)
 	if err != nil {
@@ -49,6 +51,8 @@ func (h *Handler) Get() {
 		h.CustomAbort(http.StatusInternalServerError, "")
 	}
 	h.Data["json"] = token
-	h.ServeJSON()
-
+	if err := h.ServeJSON(); err != nil {
+		log.Errorf("failed to serve json on /service/token, %v", err)
+		h.CustomAbort(http.StatusInternalServerError, "")
+	}
 }

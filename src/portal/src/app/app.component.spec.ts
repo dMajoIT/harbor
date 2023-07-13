@@ -11,49 +11,79 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-/* tslint:disable:no-unused-variable */
 
-// import { TestBed, async, ComponentFixture } from '@angular/core/testing';
-// import { AppComponent } from './app.component';
-// import { HomeComponent } from "./home/home.component";
-// import { AboutComponent } from "./about/about.component";
-// import { ClarityModule } from "@clr/angular";
-// import { ROUTING } from "./app.routing";
-// import { APP_BASE_HREF } from "@angular/common";
+import { TestBed, ComponentFixture } from '@angular/core/testing';
+import { Title } from '@angular/platform-browser';
+import { CookieService } from 'ngx-cookie';
+import { CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+import { SessionService } from './shared/services/session.service';
+import { AppConfigService } from './services/app-config.service';
+import { AppComponent } from './app.component';
+import { APP_BASE_HREF } from '@angular/common';
+import { SharedTestingModule } from './shared/shared.module';
+import { SkinableConfig } from './services/skinable-config.service';
 
-// describe('AppComponent', () => {
+describe('AppComponent', () => {
+    let fixture: ComponentFixture<any>;
+    let compiled: any;
+    let fakeCookieService = null;
+    let fakeSessionService = {
+        getCurrentUser: function () {
+            return { has_admin_role: true };
+        },
+    };
+    let fakeAppConfigService = {
+        isIntegrationMode: function () {
+            return true;
+        },
+    };
+    let fakeTitle = {
+        setTitle: function () {},
+    };
+    const fakeSkinableConfig = {
+        getSkinConfig() {
+            return {
+                headerBgColor: {
+                    darkMode: '',
+                    lightMode: '',
+                },
+                loginBgImg: '',
+                loginTitle: '',
+                product: {
+                    name: 'test',
+                    logo: '',
+                    introduction: '',
+                },
+            };
+        },
+        setTitleIcon() {},
+    };
 
-//     let fixture: ComponentFixture<any>;
-//     let compiled: any;
+    beforeEach(() => {
+        TestBed.configureTestingModule({
+            declarations: [AppComponent],
+            imports: [SharedTestingModule],
+            providers: [
+                { provide: APP_BASE_HREF, useValue: '/' },
+                { provide: CookieService, useValue: fakeCookieService },
+                { provide: SessionService, useValue: fakeSessionService },
+                { provide: AppConfigService, useValue: fakeAppConfigService },
+                { provide: Title, useValue: fakeTitle },
+                { provide: SkinableConfig, useValue: fakeSkinableConfig },
+            ],
+            schemas: [CUSTOM_ELEMENTS_SCHEMA],
+        });
 
-//     beforeEach(() => {
-//         TestBed.configureTestingModule({
-//             declarations: [
-//                 AppComponent,
-//                 AboutComponent,
-//                 HomeComponent
-//             ],
-//             imports: [
-//                 ClarityModule,
-//                 ROUTING
-//             ],
-//             providers: [{provide: APP_BASE_HREF, useValue: '/'}]
-//         });
+        fixture = TestBed.createComponent(AppComponent);
+        fixture.detectChanges();
+        compiled = fixture.nativeElement;
+    });
 
-//         fixture = TestBed.createComponent(AppComponent);
-//         fixture.detectChanges();
-//         compiled = fixture.nativeElement;
+    afterEach(() => {
+        fixture.destroy();
+    });
 
-
-//     });
-
-//     afterEach(() => {
-//         fixture.destroy();
-//     });
-
-//     it('should create the app', async(() => {
-//         expect(compiled).toBeTruthy();
-//     }));
-
-
-// });
+    it('should create the app', () => {
+        expect(compiled).toBeTruthy();
+    });
+});

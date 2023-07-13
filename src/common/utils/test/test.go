@@ -16,16 +16,17 @@ package test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-
-	"fmt"
-	"github.com/goharbor/harbor/src/common"
-	"github.com/gorilla/mux"
 	"os"
 	"sort"
+	"strings"
+
+	"github.com/gorilla/mux"
+
+	"github.com/goharbor/harbor/src/common"
 )
 
 // RequestHandlerMapping is a mapping between request and its handler
@@ -114,20 +115,17 @@ func GetUnitTestConfig() map[string]interface{} {
 		common.LDAPTimeout:            30,
 		common.LDAPVerifyCert:         true,
 		common.UAAVerifyCert:          true,
-		common.ClairDBHost:            "postgresql",
-		common.CfgExpiration:          5,
 		common.AdminInitialPassword:   "Harbor12345",
 		common.LDAPGroupSearchFilter:  "objectclass=groupOfNames",
 		common.LDAPGroupBaseDN:        "dc=example,dc=com",
 		common.LDAPGroupAttributeName: "cn",
 		common.LDAPGroupSearchScope:   2,
-		common.LdapGroupAdminDn:       "cn=harbor_users,ou=groups,dc=example,dc=com",
-		common.WithNotary:             "false",
-		common.WithChartMuseum:        "false",
+		common.LDAPGroupAdminDn:       "cn=harbor_users,ou=groups,dc=example,dc=com",
 		common.SelfRegistration:       "true",
-		common.WithClair:              "true",
 		common.TokenServiceURL:        "http://core:8080/service/token",
 		common.RegistryURL:            fmt.Sprintf("http://%s:5000", ipAddress),
+		common.ReadOnly:               false,
+		common.RobotNamePrefix:        "robot$",
 	}
 }
 
@@ -141,4 +139,34 @@ func TraceCfgMap(cfgs map[string]interface{}) {
 	for _, k := range keys {
 		fmt.Printf("%v=%v\n", k, cfgs[k])
 	}
+}
+
+// CheckSetsEqual - check int set if they are equals
+func CheckSetsEqual(setA, setB []int) bool {
+	if len(setA) != len(setB) {
+		return false
+	}
+	type void struct{}
+	var exist void
+	setAll := make(map[int]void)
+	for _, r := range setA {
+		setAll[r] = exist
+	}
+	for _, r := range setB {
+		if _, ok := setAll[r]; !ok {
+			return false
+		}
+	}
+
+	setAll = make(map[int]void)
+	for _, r := range setB {
+		setAll[r] = exist
+	}
+	for _, r := range setA {
+		if _, ok := setAll[r]; !ok {
+			return false
+		}
+	}
+	return true
+
 }

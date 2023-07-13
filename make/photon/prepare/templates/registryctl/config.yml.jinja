@@ -1,8 +1,15 @@
 ---
+{% if internal_tls.enabled %}
+protocol: "https"
+port: 8443
+
+https_config:
+  cert: "/etc/harbor/ssl/registryctl.crt"
+  key: "/etc/harbor/ssl/registryctl.key"
+
+{% else %}
 protocol: "http"
 port: 8080
-log_level: "INFO"
-
-#https_config:
-#  cert: "server.crt"
-#  key: "server.key"
+{% endif %}
+log_level: {{level}}
+registry_config: "/etc/registry/config.yml"

@@ -1,19 +1,22 @@
-// Copyright (c) 2017 VMware, Inc. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+# Copyright Project Harbor Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#	http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License
 
 *** Settings ***
 Documentation  Harbor BATs
+Library  ../../apitests/python/testutils.py
+Library  ../../apitests/python/library/oras.py
+Library  ../../apitests/python/library/singularity.py
 Resource  ../../resources/Util.robot
 Default Tags  Nightly
 
@@ -24,81 +27,61 @@ ${HARBOR_ADMIN}  admin
 
 *** Test Cases ***
 Test Case - Sign With Admin
+    [tags]  admin
     Init Chrome Driver
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
     Close Browser
 
-Test Case - Vulnerability Data Not Ready
-#This case must run before vulnerability db ready
+Test Case - Push ORAS and Display
+    [Tags]  push_oras
     Init Chrome Driver
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Go Into Project  library  has_image=${false}
-    Vulnerability Not Ready Project Hint
-    Switch To Vulnerability Page
-    Vulnerability Not Ready Config Hint
+    ${d}=    Get Current Date    result_format=%m%s
+    Sign In Harbor  ${HARBOR_URL}  user010  Test1@34
+    Create An New Project And Go Into Project  test${d}
+    ${repo_name}=  Set Variable  hello-oras-artifact
+    ${tag}=  Set Variable  1.0.0
+    Retry Keyword N Times When Error  5  Oras Push  ${ip}  user010  Test1@34  test${d}  ${repo_name}  ${tag}
+    Go Into Repo  test${d}  ${repo_name}
+    Wait Until Page Contains  ${tag}
+    Close Browser
 
-Test Case - Garbage Collection
+Test Case - Push CNAB Bundle and Display
+    [Tags]  push_cnab
     Init Chrome Driver
-    ${d}=   Get Current Date    result_format=%m%s
+    ${d}=    Get Current Date    result_format=%m%s
+    ${index1_image1}=  Set Variable  busybox
+    ${index1_image2}=  Set Variable  alpine
+    ${index2_image1}=  Set Variable  hello-world
+    ${index2_image2}=  Set Variable  redis
+    ${user}=  Set Variable  user010
+    ${pwd}=  Set Variable  Test1@34
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Create An New Project And Go Into Project  test${d}
+    ${index1}  ${index2}=  Prepare Cnab Push Test Data  ${ip}  ${user}  ${pwd}  test${d}  ${index1_image1}  ${index1_image2}  ${index2_image1}  ${index2_image2}
+    ${target}=  Set Variable  ${ip}/test${d}/cnab${d}:cnab_tag${d}
+    Retry Keyword N Times When Error  5  CNAB Push Bundle  ${ip}  ${user}  ${pwd}  ${target}  ./tests/robot-cases/Group0-Util/bundle.json  ${ip}  test${d}  ${index1}  ${index2}
 
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  project${d}
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  hello-world
-    Sleep  2
-    Go Into Project  project${d}
-    Delete Repo  project${d}
-
-    Switch To Garbage Collection
-    Click GC Now
-    Logout Harbor
-    Sleep  2
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Switch To Garbage Collection
-    Sleep  1
-    Switch To GC History
-    Retry Wait Until Page Contains  Finished
-
-    ${rc}  ${output}=  Run And Return Rc And Output  curl -u ${HARBOR_ADMIN}:${HARBOR_PASSWORD} -i --insecure -H "Content-Type: application/json" -X GET "https://${ip}/api/system/gc/1/log"
-    Log To Console  ${output}
-    Should Be Equal As Integers  ${rc}  0
-    Should Contain  ${output}  3 blobs and 0 manifests eligible for deletion
-    #Should Contain  ${output}  Deleting blob:
-    Should Contain  ${output}  success to run gc in job.
-
+    Go Into Project  test${d}
+    Wait Until Page Contains  test${d}/cnab${d}
+    Go Into Repo  test${d}  cnab${d}
+    Wait Until Page Contains  cnab_tag${d}
+    Go Into Project  test${d}
+    Wait Until Page Contains  test${d}/cnab${d}
+    Go Into Repo  test${d}  cnab${d}
+    Go Into Index And Contain Artifacts  cnab_tag${d}  total_artifact_count=3  archive_count=2
     Close Browser
 
 Test Case - Create An New Project
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  test${d}
+    Create An New Project And Go Into Project  test${d}
     Close Browser
 
 Test Case - Delete A Project
     Init Chrome Driver
-    ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  project${d}
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  hello-world
-    Project Should Not Be Deleted  project${d}
-    Go Into Project  project${d}
-    Delete Repo  project${d}
-    Navigate To Projects
-    Project Should Be Deleted  project${d}
-    Close Browser
-
-Test Case - Read Only Mode
-    Init Chrome Driver
-    ${d}=   Get Current Date    result_format=%m%s
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  project${d}
-
-    Enable Read Only
-    Cannot Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  busybox:latest
-
-    Disable Read Only
-    Sleep  5
-    Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  busybox:latest
+    Delete A Project Without Sign In Harbor
     Close Browser
 
 Test Case - Repo Size
@@ -106,9 +89,8 @@ Test Case - Repo Size
     ${d}=  Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
     Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  library  alpine  2.6  2.6
-    Go Into Project  library
-    Go Into Repo  alpine
-    Wait Until Page Contains  1.92MB
+    Go Into Repo  library  alpine
+    Wait Until Page Contains  1.92MiB
     Close Browser
 
 Test Case - Staticsinfo
@@ -123,8 +105,8 @@ Test Case - Staticsinfo
     ${publicprojcount1}=  Get Statics Public Project
     ${totalrepocount1}=  Get Statics Total Repo
     ${totalprojcount1}=  Get Statics Total Project
-    Create An New Project  private${d}
-    Create An New Project  public${d}  true
+    Create An New Project And Go Into Project  private${d}
+    Create An New Project And Go Into Project  public${d}  true
     Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  private${d}  hello-world
     Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  public${d}  hello-world
     Reload Page
@@ -150,23 +132,24 @@ Test Case - Staticsinfo
     Should be equal as integers  ${publicrepocount2}  ${publicrepocount}
     Should be equal as integers  ${totalprojcount2}  ${totalprojcount}
     Should be equal as integers  ${totalrepocount2}  ${totalrepocount}
+    Close Browser
 
 Test Case - Push Image
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  test${d}
+    Create An New Project And Go Into Project  test${d}
 
     Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  test${d}  hello-world:latest
     Go Into Project  test${d}
     Wait Until Page Contains  test${d}/hello-world
+    Close Browser
 
 Test Case - Project Level Policy Public
     Init Chrome Driver
     ${d}=  Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
+    Create An New Project And Go Into Project  project${d}
     Goto Project Config
     Click Project Public
     Save Project Config
@@ -176,23 +159,7 @@ Test Case - Project Level Policy Public
     # Here logout and login to try avoid a bug only in autotest
     Logout Harbor
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Filter Object  project${d}
-    Project Should Be Public  project${d}
-    Close Browser
-
-Test Case - Project Level Policy Content Trust
-    Init Chrome Driver
-    ${d}=  Get Current Date    result_format=%m%s
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Create An New Project  project${d}
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  hello-world:latest
-    Go Into Project  project${d}
-    Goto Project Config
-    Click Content Trust
-    Save Project Config
-    # Verify
-    Content Trust Should Be Selected
-    Cannot Pull Unsigned Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  hello-world:latest
+    Retry Double Keywords When Error  Filter Project  project${d}  Project Should Be Public  project${d}
     Close Browser
 
 Test Case - Verify Download Ca Link
@@ -200,21 +167,6 @@ Test Case - Verify Download Ca Link
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
     Switch To System Settings
     Page Should Contain  Registry Root Certificate
-    Close Browser
-
-Test Case - Edit Email Settings
-    Init Chrome Driver
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-
-    Switch To Email
-    Config Email
-
-    Logout Harbor
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-
-    Switch To Email
-    Verify Email
-
     Close Browser
 
 Test Case - Edit Token Expire
@@ -247,7 +199,6 @@ Test Case - Update Label
    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
    Switch To System Labels
    Create New Labels  label_${d}
-   Sleep  3
    ${d1}=    Get Current Date
    Update A Label  label_${d}
    Close Browser
@@ -258,48 +209,50 @@ Test Case - Delete Label
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
     Switch To System Labels
     Create New Labels  label_${d}
-    Sleep  3
     Delete A Label  label_${d}
-    Close Browser
-
-Test Case - Disable Scan Schedule
-    Init Chrome Driver
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Switch To Vulnerability Page
-    Disable Scan Schedule
-    Logout Harbor
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Switch To Vulnerability Page
-    Retry Wait Until Page Contains  None
     Close Browser
 
 Test Case - User View Projects
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  user001  Test1@34
-    Create An New Project  test${d}1
-    Create An New Project  test${d}2
-    Create An New Project  test${d}3
-    Switch To Log
+    Create An New Project And Go Into Project  test${d}1
+    Create An New Project And Go Into Project  test${d}2
+    Create An New Project And Go Into Project  test${d}3
+    Switch To Logs
     Wait Until Page Contains  test${d}1
     Wait Until Page Contains  test${d}2
     Wait Until Page Contains  test${d}3
     Close Browser
 
 Test Case - User View Logs
+    [tags]  user_view_logs
     Init Chrome Driver
     ${d}=   Get Current Date    result_format=%m%s
+    ${img}=    Set Variable    kong
+    ${tag}=    Set Variable    latest
+    ${user}=    Set Variable    user002
+    ${pwd}=    Set Variable    Test1@34
+    &{image_with_tag}=	 Create Dictionary  image=for_log_view  tag=base
+    ${replication_image}=  Get From Dictionary  ${image_with_tag}  image
+    ${replication_tag}=  Get From Dictionary  ${image_with_tag}  tag
+    @{target_images}=  Create List  '&{image_with_tag}'
 
-    Sign In Harbor  ${HARBOR_URL}  user002  Test1@34
-    Create An New Project  project${d}
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Create An New Project And Go Into Project  project${d}
+    Logout Harbor
 
-    Push image  ${ip}  user002  Test1@34  project${d}  busybox:latest
-    Pull image  ${ip}  user002  Test1@34  project${d}  busybox:latest
+    Body Of Replication Of Pull Images from Registry To Self   harbor  https://cicd.harbor.vmwarecna.net  ${null}  ${null}  nightly/${replication_image}  project${d}  N  Flatten 1 Level  @{target_images}
 
+    Push image  ${ip}  ${user}  ${pwd}  project${d}  ${img}:${tag}
+    Pull image  ${ip}  ${user}  ${pwd}  project${d}  ${replication_image}:${replication_tag}
+    Close Browser
+
+    Init Chrome Driver
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
     Go Into Project  project${d}
-    Delete Repo  project${d}
-
-    Sleep  3
+    Delete Repo  project${d}  ${replication_image}
+    Delete Repo  project${d}  ${img}
 
     Go To Project Log
     Advanced Search Should Display
@@ -307,30 +260,12 @@ Test Case - User View Logs
     Do Log Advanced Search
     Close Browser
 
-
 Test Case - Manage Project Member
     Init Chrome Driver
-    ${d}=    Get current Date  result_format=%m%s
-
-    Sign In Harbor  ${HARBOR_URL}  user004  Test1@34
-    Create An New Project  project${d}
-    Push image  ip=${ip}  user=user004  pwd=Test1@34  project=project${d}  image=hello-world
-    Logout Harbor
-
-    User Should Not Be A Member Of Project  user005  Test1@34  project${d}
-    Manage Project Member  user004  Test1@34  project${d}  user005  Add
-    User Should Be Guest  user005  Test1@34  project${d}
-    Change User Role In Project  user004  Test1@34  project${d}  user005  Developer
-    User Should Be Developer  user005  Test1@34  project${d}
-    Change User Role In Project  user004  Test1@34  project${d}  user005  Admin
-    User Should Be Admin  user005  Test1@34  project${d}  user006
-    Change User Role In Project  user004  Test1@34  project${d}  user005  Master
-    User Should Be Master  user005  Test1@34  project${d}
-    Manage Project Member  user004  Test1@34  project${d}  user005  Remove
-    User Should Not Be A Member Of Project  user005  Test1@34  project${d}
-    Push image  ip=${ip}  user=user004  pwd=Test1@34  project=project${d}  image=hello-world
-    User Should Be Guest  user006  Test1@34  project${d}
-
+    ${user}=    Set Variable    user004
+    ${pwd}=    Set Variable    Test1@34
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Manage Project Member Without Sign In Harbor  ${user}  ${pwd}
     Close Browser
 
 Test Case - Manage project publicity
@@ -357,7 +292,6 @@ Test Case - Edit Project Creation
     Project Creation Should Display
     Logout Harbor
 
-    Sleep  3
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
     Set Pro Create Admin Only
     Logout Harbor
@@ -375,10 +309,9 @@ Test Case - Edit Repo Info
     ${d}=  Get Current Date  result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user011  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image  ${ip}  user011  Test1@34  project${d}  hello-world
-    Go Into Project  project${d}
-    Go Into Repo  project${d}/hello-world
+    Go Into Repo  project${d}  hello-world
     Edit Repo Info
     Close Browser
 
@@ -387,14 +320,19 @@ Test Case - Delete Multi Project
     ${d}=    Get Current Date    result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user012  Test1@34
-    Create An New Project  projecta${d}
-    Create An New Project  projectb${d}
+    Create An New Project And Go Into Project  projecta${d}
+    Create An New Project And Go Into Project  projectb${d}
     Push Image  ${ip}  user012  Test1@34  projecta${d}  hello-world
     Navigate To Projects
     Filter Object  project
     Retry Wait Element Not Visible  //clr-datagrid/div/div[2]
     @{project_list}  Create List  projecta  projectb
-    Multi-delete Object  ${project_delete_btn}  @{project_list}
+    FOR  ${project}  IN  @{project_list}
+        Retry Element Click  //clr-dg-row[contains(.,'${project}')]//label
+    END
+    Retry Element Click  ${project_action_xpath}
+    Retry Element Click  ${project_delete_btn}
+    Retry Element Click  ${repo_delete_on_card_view_btn}
     # Verify delete project with image should not be deleted directly
     Delete Fail  projecta${d}
     Delete Success  projectb${d}
@@ -405,10 +343,9 @@ Test Case - Delete Multi Repo
     ${d}=   Get Current Date    result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user013  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image  ${ip}  user013  Test1@34  project${d}  hello-world
     Push Image  ${ip}  user013  Test1@34  project${d}  busybox
-    Sleep  2
     Go Into Project  project${d}
     @{repo_list}  Create List  hello-world  busybox
     Multi-delete Object  ${repo_delete_btn}  @{repo_list}
@@ -416,27 +353,25 @@ Test Case - Delete Multi Repo
     Delete Success  hello-world  busybox
     Close Browser
 
-Test Case - Delete Multi Tag
+Test Case - Delete Multi Artifacts
     Init Chrome Driver
     ${d}=   Get Current Date    result_format=%m%s
-
     Sign In Harbor  ${HARBOR_URL}  user014  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image With Tag  ${ip}  user014  Test1@34  project${d}  redis  3.2.10-alpine  3.2.10-alpine
     Push Image With Tag  ${ip}  user014  Test1@34  project${d}  redis  4.0.7-alpine  4.0.7-alpine
-    Go Into Project  project${d}
-    Go Into Repo  redis
+    Go Into Repo  project${d}  redis
     @{tag_list}  Create List  3.2.10-alpine  4.0.7-alpine
-    Multi-delete object  ${tag_delete_btn}  @{tag_list}
+    Multi-delete Artifact  @{tag_list}
     # Verify
-    Delete Success  3.2.10-alpine  4.0.7-alpine
+    Delete Success  sha256:dd179737  sha256:28a85227
     Close Browser
 
 Test Case - Delete Repo on CardView
     Init Chrome Driver
     ${d}=   Get Current Date  result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  user015  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image  ${ip}  user015  Test1@34  project${d}  hello-world
     Push Image  ${ip}  user015  Test1@34  project${d}  busybox
     Go Into Project  project${d}
@@ -450,8 +385,7 @@ Test Case - Delete Multi Member
     Init Chrome Driver
     ${d}=   Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  user016  Test1@34
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
+    Create An New Project And Go Into Project  project${d}
     Switch To Member
     Add Guest Member To Project  user017
     Add Guest Member To Project  user018
@@ -463,15 +397,11 @@ Test Case - Project Admin Operate Labels
     Init Chrome Driver
     ${d}=   Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  user019  Test1@34
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
-    Sleep  2
+    Create An New Project And Go Into Project  project${d}
     # Add labels
     Switch To Project Label
     Create New Labels  label_${d}
-    Sleep  2
     Update A Label  label_${d}
-    Sleep  2
     Delete A Label  label_${d}
     Close Browser
 
@@ -479,18 +409,15 @@ Test Case - Project Admin Add Labels To Repo
     Init Chrome Driver
     ${d}=   Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  user020  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image With Tag  ${ip}  user020  Test1@34  project${d}  redis  3.2.10-alpine  3.2.10-alpine
     Push Image With Tag  ${ip}  user020  Test1@34  project${d}  redis  4.0.7-alpine  4.0.7-alpine
     Go Into Project  project${d}
-    Sleep  2
     # Add labels
     Switch To Project Label
     Create New Labels  label111
     Create New Labels  label22
-    Sleep  2
-    Switch To Project Repo
-    Go Into Repo  project${d}/redis
+    Go Into Repo  project${d}  redis
     Add Labels To Tag  3.2.10-alpine  label111
     Add Labels To Tag  4.0.7-alpine  label22
     Filter Labels In Tags  label111  label22
@@ -501,7 +428,7 @@ Test Case - Developer Operate Labels
     ${d}=   Get Current Date    result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user021  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Logout Harbor
 
     Manage Project Member  user021  Test1@34  project${d}  user022  Add  ${false}
@@ -509,131 +436,663 @@ Test Case - Developer Operate Labels
 
     Sign In Harbor  ${HARBOR_URL}  user022  Test1@34
     Go Into Project  project${d}  has_image=${false}
-    Sleep  3
-    Page Should Not Contain Element  xpath=//a[contains(.,'Labels')]
+    Retry Wait Until Page Not Contains Element  xpath=//a[contains(.,'Labels')]
     Close Browser
 
-Test Case - Scan A Tag In The Repo
-    Body Of Scan A Tag In The Repo
-
-Test Case - Scan As An Unprivileged User
-    Init Chrome Driver
-    ${d}=    get current date    result_format=%m%s
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  library  hello-world
-
-    Sign In Harbor  ${HARBOR_URL}  user024  Test1@34
-    Go Into Project  library
-    Go Into Repo  hello-world
-    Select Object  latest
-    Scan Is Disabled
-    Close Browser
-
-Test Case - Scan Image With Empty Vul
-    Init Chrome Driver
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  library  busybox
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Go Into Project  library
-    Go Into Repo  busybox
-    Scan Repo  latest  Succeed
-    Move To Summary Chart
-    Wait Until Page Contains  Unknow
-    Close Browser
-
-Test Case - Manual Scan All
-    Init Chrome Driver
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  library  redis
-    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Switch To Vulnerability Page
-    Trigger Scan Now
-    Navigate To Projects
-    Go Into Project  library
-    Go Into Repo  redis
-    Summary Chart Should Display  latest
-    Close Browser
-
-Test Case - View Scan Error
-    Init Chrome Driver
-    ${d}=  get current date  result_format=%m%s
-
-    Sign In Harbor  ${HARBOR_URL}  user026  Test1@34
-    Create An New Project  project${d}
-    Push Image  ${ip}  user026  Test1@34  project${d}  vmware/photon:1.0
-    Go Into Project  project${d}
-    Go Into Repo  project${d}/vmware/photon
-    Scan Repo  1.0  Fail
-    View Scan Error Log
-    Close Browser
-
-Test Case - List Helm Charts
-    Body Of List Helm Charts
-
-Test Case - Admin Push Signed Image
-    Body Of Admin Push Signed Image
-
-Test Case - Retag A Image Tag
+Test Case - Copy A Image
     Init Chrome Driver
     ${random_num1}=   Get Current Date    result_format=%m%s
     ${random_num2}=   Evaluate  str(random.randint(1000,9999))  modules=random
 
     Sign In Harbor  ${HARBOR_URL}  user028  Test1@34
-    Create An New Project  project${random_num1}
-    Create An New Project  project${random_num2}
+    Create An New Project And Go Into Project  project${random_num1}${random_num2}
+    Create An New Project And Go Into Project  project${random_num1}
 
-    Go Into Project  project${random_num1}  has_image=${false}
-    Sleep  1
     Push Image With Tag  ${ip}  user028  Test1@34  project${random_num1}  redis  ${image_tag}
-    Sleep  1
-    Go Into Repo  project${random_num1}/redis
-    Retag Image  ${image_tag}  project${random_num2}  ${target_image_name}  ${target_tag_value}
+    Go Into Repo  project${random_num1}  redis
+    Copy Image  ${image_tag}  project${random_num1}${random_num2}  ${target_image_name}
+    Navigate To Projects
+    Go Into Project  project${random_num1}${random_num2}
+    Page Should Contain  ${target_image_name}
+    Go Into Repo  project${random_num1}${random_num2}  ${target_image_name}
+    Retry Wait Until Page Contains Element  xpath=${tag_value_xpath}
+    Close Browser
+
+Test Case - Copy A Image And Accessory
+    [Tags]  copy_image_and_accessory
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${source_project}=  Set Variable  source_project${d}
+    ${target_project}=  Set Variable  target_project${d}
+    ${user}=  Set Variable  user006
+    ${pwd}=  Set Variable  Test1@34
+    ${image}=  Set Variable  redis
+    ${tag}=  Set Variable  latest
+
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Create An New Project And Go Into Project  ${target_project}
+    Create An New Project And Go Into Project  ${source_project}
+
+    Push Image With Tag  ${ip}  ${user}  ${pwd}  ${source_project}  ${image}  ${tag}
+    Cosign Generate Key Pair
+    Docker Login  ${ip}  ${user}  ${pwd}
+    Cosign Sign  ${ip}/${source_project}/${image}:${tag}
+    Docker Logout  ${ip}
+    Go Into Repo  ${source_project}  ${image}
+    Should Be Signed By Cosign  ${tag}
+
+    Copy Image  ${tag}  ${target_project}  ${image}
+
+    Retry Double Keywords When Error  Go Into Project  ${target_project}  Retry Wait Until Page Contains  ${image}
+    Go Into Repo  ${target_project}  ${image}
+    Retry Wait Until Page Contains Element  //clr-dg-row[contains(.,${tag})]
+    Should Be Signed By Cosign  ${tag}
+    Close Browser
+
+Test Case - Create An New Project With Quotas Set
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${storage_quota}=  Set Variable  600
+    ${storage_quota_unit}=  Set Variable  GiB
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project    project${d}  storage_quota=${storage_quota}  storage_quota_unit=${storage_quota_unit}
+    ${storage_quota_ret}=  Get Project Storage Quota Text From Project Quotas List  project${d}
+    Should Be Equal As Strings  ${storage_quota_ret}  0Byte of ${storage_quota}${storage_quota_unit}
+    Close Browser
+
+Test Case - Project Storage Quotas Dispaly And Control
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${storage_quota}=  Set Variable  350
+    ${storage_quota_unit}=  Set Variable  MiB
+    ${image_a}=  Set Variable  one_layer
+    ${image_b}=  Set Variable  redis
+    ${image_a_size}=    Set Variable   330.83MiB
+    ${image_b_size}=    Set Variable   34.1\\dMiB
+    ${image_a_ver}=  Set Variable  1.0
+    ${image_b_ver}=  Set Variable  donotremove5.0
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  project${d}  storage_quota=${storage_quota}  storage_quota_unit=${storage_quota_unit}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image_b}  tag=${image_b_ver}  tag1=${image_b_ver}
+    ${storage_quota_ret}=  Get Project Storage Quota Text From Project Quotas List  project${d}
+    Should Match Regexp  ${storage_quota_ret}  ${image_b_size} of ${storage_quota}${storage_quota_unit}
+    Cannot Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image_a}:${image_a_ver}  err_msg=adding 330.1 MiB of storage resource, which when updated to current usage of   err_msg_2=MiB will exceed the configured upper limit of ${storage_quota}.0 MiB
+    Go Into Project  project${d}
+    Delete Repo  project${d}  ${image_b}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image_a}  tag=${image_a_ver}  tag1=${image_a_ver}
+    ${storage_quota_ret}=  Get Project Storage Quota Text From Project Quotas List  project${d}
+    ${storage_quota_ret_str_left}  Fetch From Left  ${storage_quota_ret}  25.
+    Log  ${storage_quota_ret_str_left}
+    ${storage_quota_ret_str_right}  Fetch From Left  ${storage_quota_ret}  25.
+    Log  ${storage_quota_ret_str_right}
+    Log  ${storage_quota_ret_str_left}${storage_quota_ret_str_right}
+    Should Be Equal As Strings  ${storage_quota_ret}  ${image_a_size} of ${storage_quota}${storage_quota_unit}
+    Close Browser
+
+Test Case - Project Quotas Control Under Copy
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${image_a}=  Set Variable  redis
+    ${image_b}=  Set Variable  logstash
+    ${image_a_ver}=  Set Variable  donotremove5.0
+    ${image_b_ver}=  Set Variable  do_not_remove_6.8.3
+    ${storage_quota}=  Set Variable  330
+    ${storage_quota_unit}=  Set Variable  MiB
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  project_a_${d}
+    Create An New Project And Go Into Project  project_b_${d}  storage_quota=${storage_quota}  storage_quota_unit=${storage_quota_unit}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project_a_${d}  ${image_a}  tag=${image_a_ver}  tag1=${image_a_ver}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project_a_${d}  ${image_b}  tag=${image_b_ver}  tag1=${image_b_ver}
+    Go Into Repo  project_a_${d}  ${image_a}
+    Copy Image  ${image_a_ver}  project_b_${d}  ${image_a}
+    Go Into Repo  project_a_${d}  ${image_b}
+    Copy Image  ${image_b_ver}  project_b_${d}  ${image_b}  is_success=${false}
+    Go Into Project  project_b_${d}
+    Retry Wait Until Page Contains Element  xpath=//clr-dg-cell[contains(.,'${image_a}')]/a
+    Retry Wait Until Page Not Contains Element  xpath=//clr-dg-cell[contains(.,'${image_b}')]/a
+    Close Browser
+
+Test Case - Tag CRUD
+    Init Chrome Driver
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    ${d}=    Get Current Date    result_format=%m%s
+    Create An New Project And Go Into Project  project${d}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  hello-world  latest
+    Go Into Repo   project${d}  hello-world
+    Go Into Artifact   latest
+    Should Contain Tag   latest
+    # add more than one tag
+    Add A New Tag   123
+    Add A New Tag   456
+    Delete A Tag  latest
+    Close Browser
+
+Test Case - Tag Retention
+    Init Chrome Driver
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    ${d}=    Get Current Date    result_format=%m%s
+    ${image_sample_1}=    Set Variable  hello-world
+    ${image_sample_2}=    Set Variable  memcached
+    Create An New Project And Go Into Project  project${d}
+    Switch To Tag Retention
+    Add A Tag Retention Rule
+    Delete A Tag Retention Rule
+    Add A Tag Retention Rule
+    Edit A Tag Retention Rule    **   latest
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image_sample_1}  latest
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image_sample_2}   123
+    Set Daily Schedule
+    Execute Dry Run  ${image_sample_2}  0/1
+    Execute Run  ${image_sample_2}  0/1
+    Execute Dry Run  ${image_sample_1}  1/1
+    Execute Run  ${image_sample_1}  1/1
+    Close Browser
+
+Test Case - Tag Immutability
+    Init Chrome Driver
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    ${d}=    Get Current Date    result_format=%m%s
+    Create An New Project And Go Into Project  project${d}
+    Switch To Tag Immutability
+    @{param}  Create List  1212  3434
+    Retry Add A Tag Immutability Rule  @{param}
+    Delete A Tag Immutability Rule
+    @{param}  Create List  5566  7788
+    Retry Add A Tag Immutability Rule  @{param}
+    Edit A Tag Immutability Rule  hello-world  latest
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  hello-world  latest
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  busybox  latest
+    Go Into Project  project${d}
+    @{repo_list}  Create List  hello-world  busybox
+    Multi-delete Object  ${repo_delete_btn}  @{repo_list}
+    # Verify
+    Delete Fail  hello-world
+    Delete Success  busybox
+    Close Browser
+
+Test Case - Robot Account
+    [tags]  robot_account
+    Init Chrome Driver
+    ${d}=    Get Current Date    result_format=%m%s
+    Sign In Harbor    ${HARBOR_URL}    ${HARBOR_ADMIN}    ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project    project${d}
+    ${token}=    Create A Robot Account And Return Token    project${d}    robot${d}
+    Log To Console    ${token}
+    Log    ${token}
+    Push image  ${ip}  robot${d}  ${token}  project${d}  hello-world:latest  is_robot=${true}
+    Pull image  ${ip}  robot${d}  ${token}  project${d}  hello-world:latest  is_robot=${true}
+    Close Browser
+
+Test Case - Push Docker Manifest Index and Display
+    Init Chrome Driver
+    ${d}=    Get Current Date    result_format=%m%s
+    ${image_a}=  Set Variable  hello-world
+    ${image_b}=  Set Variable  busybox
+    ${image_a_ver}=  Set Variable  latest
+    ${image_b_ver}=  Set Variable  latest
+
+    Sign In Harbor  ${HARBOR_URL}  user010  Test1@34
+    Create An New Project And Go Into Project  test${d}
+
+    Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  test${d}  ${image_a}:${image_a_ver}
+    Go Into Project  test${d}
+    Wait Until Page Contains  test${d}/${image_a}
+
+    Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  test${d}  ${image_b}:${image_b_ver}
+    Go Into Project  test${d}
+    Wait Until Page Contains  test${d}/${image_b}
+
+    Docker Push Index  ${ip}  user010  Test1@34  ${ip}/test${d}/index${d}:index_tag${d}  ${ip}/test${d}/${image_a}:${image_a_ver}  ${ip}/test${d}/${image_b}:${image_b_ver}
+
+    Go Into Repo  test${d}  index${d}
+    Wait Until Page Contains  index_tag${d}
+
+    Go Into Project  test${d}
+    Wait Until Page Contains  test${d}/index${d}
+    Go Into Repo  test${d}  index${d}
+    Go Into Index And Contain Artifacts  index_tag${d}  total_artifact_count=2
+    Close Browser
+
+Test Case - Can Not Copy Image In ReadOnly Mode
+    Init Chrome Driver
+    ${random_num1}=   Get Current Date    result_format=%m%s
+    ${random_num2}=   Evaluate  str(random.randint(1000,9999))  modules=random
+
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  project${random_num1}${random_num2}
+    Create An New Project And Go Into Project  project${random_num1}
+
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${random_num1}  redis  ${image_tag}
+    Enable Read Only
+    Go Into Repo  project${random_num1}  redis
+    Copy Image  ${image_tag}  project${random_num1}${random_num2}  ${target_image_name}  is_success=${false}
     Retry Wait Element Not Visible  ${repo_retag_confirm_dlg}
     Navigate To Projects
-    Go Into Project  project${random_num2}
-    Sleep  1
-    Page Should Contain  ${target_image_name}
-    Go Into Repo  project${random_num2}/${target_image_name}
-    Sleep  1
-    Page Should Contain Element  xpath=${tag_value_xpath}
+    Go Into Project  project${random_num1}${random_num2}  has_image=${false}
+    Go Into Project  project${random_num1}${random_num2}  has_image=${false}
+    Disable Read Only
     Close Browser
 
-Test Case - Scan Image On Push
-    Wait Unitl Vul Data Ready  ${HARBOR_URL}  7200  30
+Test Case - Read Only Mode
+    Init Chrome Driver
+    ${d}=   Get Current Date    result_format=%m%s
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  project${d}
+
+    Enable Read Only
+    Cannot Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  busybox:latest
+
+    Disable Read Only
+    Push image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  busybox:latest
+    Close Browser
+
+Test Case - System Robot Account Cover All Projects
+    [Tags]  sys_robot_account_cover
+    ${d}=  Get Current Date    result_format=%m%s
+    ${pro_name}=  Set Variable  project_${d}
     Init Chrome Driver
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    Go Into Project  library
+    Create An New Project And Go Into Project  ${pro_name}
+    ${name}  ${secret}=  Create A New System Robot Account  is_cover_all=${true}
+    Navigate To Projects
+    Switch To Robot Account
+    System Robot Account Exist  ${name}  all
+    Close Browser
+
+Test Case - System Robot Account
+    [Tags]  sys_robot_account
+    ${d}=  Get Current Date    result_format=%m%s
+    ${project_count}=  Evaluate  random.randint(3, 5)
+    ${pro_name}=  Set Variable  project_${d}
+    Init Chrome Driver
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    ${project_permission_list}=  Create A Random Project Permission List  ${project_count}
+    ${name}  ${secret}=  Create A New System Robot Account  project_permission_list=${project_permission_list}
+    System Robot Account Exist  ${name}  ${project_count}
+    Close Browser
+
+Test Case - Go To Harbor Api Page
+    [Tags]  go_to_harbor_api_page
+    Init Chrome Driver
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Retry Keyword N Times When Error  4  Check Harbor Api Page
+    Close Browser
+
+Test Case - WASM Push And Pull To Harbor
+    [Tags]  wasm_push_and_pull_to_harbor
+    Init Chrome Driver
+    ${user}=    Set Variable    user004
+    ${pwd}=    Set Variable    Test1@34
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    ${d}=   Get Current Date    result_format=%m%s
+    Create An New Project And Go Into Project  project${d}
+    Run  wget https://github.com/engineerd/wasm-to-oci/blob/v0.1.2/testdata/hello.wasm
+    Wait Unitl Command Success  docker login -u ${user} -p ${pwd} ${ip}
+    Wait Unitl Command Success  wasm-to-oci push hello.wasm ${ip}/project${d}/wasm-to-oci:v1
+    Wait Unitl Command Success  wasm-to-oci pull ${ip}/project${d}/wasm-to-oci:v1 --out test.wasm
+    Wait Unitl Command Success  docker logout ${ip}
+    Retry file should exist  test.wasm
+    Close Browser
+
+Test Case - Carvel Imgpkg Push And Pull To Harbor
+    [Tags]  imgpkg_push_and_pull
+    Init Chrome Driver
+    ${user}=  Set Variable  user004
+    ${pwd}=  Set Variable  Test1@34
+    ${out_path}=  Set Variable  /tmp/my-bundle
+    ${repository}=  Set Variable  my-bundle
+    ${tag}=  Set Variable  v1.0.0
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    ${d}=  Get Current Date  result_format=%m%s
+    Create An New Project And Go Into Project  project${d}
+    Prepare Image Package Test Files  ${EXECDIR}/config
+    Docker Login  ${ip}  ${user}  ${pwd}
+    Imgpkg Push  ${ip}  project${d}  ${repository}  ${tag}  ${EXECDIR}/config
+    Imgpkg Pull  ${ip}  project${d}  ${repository}  ${tag}  ${out_path}
+    Docker Logout  ${ip}
+    Retry File Should Exist  ${out_path}/.imgpkg/bundle.yml
+    Retry File Should Exist  ${out_path}/.imgpkg/images.yml
+    Close Browser
+
+Test Case - Cosign And Cosign Deployment Security Policy
+    [Tags]  cosign
+    Init Chrome Driver
+    ${user}=  Set Variable  user006
+    ${pwd}=  Set Variable  Test1@34
+    ${d}=  Get Current Date  result_format=%m%s
+    ${image}=  Set Variable  hello-world
+    ${tag}=  Set Variable  latest
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Create An New Project And Go Into Project  project${d}
     Goto Project Config
-    Enable Scan On Push
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  library  memcached
-    Navigate To Projects
-    Go Into Project  library
-    Go Into Repo  memcached
-    Summary Chart Should Display  latest
-    Close Browser
+    Click Cosign Deployment Security
+    Save Project Config
+    Content Cosign Deployment security Be Selected
 
-Test Case - View Scan Results
-    Init Chrome Driver
-    ${d}=  get current date  result_format=%m%s
-
-    Sign In Harbor  ${HARBOR_URL}  user025  Test1@34
-    Create An New Project  project${d}
-    Push Image  ${ip}  user025  Test1@34  project${d}  tomcat
+    Push Image With Tag  ${ip}  ${user}  ${pwd}  project${d}  ${image}  ${tag}
     Go Into Project  project${d}
-    Go Into Repo  project${d}/tomcat
-    Scan Repo  latest  Succeed
-    Summary Chart Should Display  latest
-    View Repo Scan Details
+    Go Into Repo  project${d}  ${image}
+    Should Not Be Signed By Cosign  ${tag}
+    Cannot Pull Image  ${ip}  ${user}  ${pwd}  project${d}  ${image}:${tag}  err_msg=The image is not signed in Cosign.
+    Cosign Generate Key Pair
+    Cosign Verify  ${ip}/project${d}/${image}:${tag}  ${false}
+
+    Cosign Sign  ${ip}/project${d}/${image}:${tag}
+    Cosign Verify  ${ip}/project${d}/${image}:${tag}  ${true}
+    Retry Double Keywords When Error  Retry Element Click  ${artifact_list_refresh_btn}  Should Be Signed By Cosign  ${tag}
+    Pull image  ${ip}  ${user}  ${pwd}  project${d}  ${image}:${tag}
+
+    Retry Double Keywords When Error  Delete Accessory  ${tag}  Should be Accessory deleted  ${tag}
     Close Browser
 
-Test Case - Project Level Image Serverity Policy
+Test Case - Audit Log And Purge
+    [Tags]  audit_log_and_purge
     Init Chrome Driver
+    ${user}=  Set Variable  user003
+    ${pwd}=  Set Variable  Test1@34
+    ${d}=  Get Current Date  result_format=%m%s
+    ${image}=  Set Variable  alpine
+    ${tag1}=  Set Variable  3.10
+    ${tag2}=  Set Variable  test
+    ${sha256}=  Set Variable  sha256:de78803598bc4c940fc4591d412bffe488205d5d953f94751c6308deeaaa7eb8
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    # create project
+    Create An New Project And Go Into Project  project${d}
+    Switch To Logs
+    Verify Log  ${user}  project${d}  project  create
+    # create artifact
+    Push Image With Tag  ${ip}  ${user}  ${pwd}  project${d}  ${image}  ${tag1}  ${tag1}
+    Clean All Local Images
+    Verify Log  ${user}  project${d}/${image}:${tag1}  artifact  create
+    Go Into Repo  project${d}  ${image}
+    Go Into Artifact  ${tag1}
+    # create tag
+    Add A New Tag   ${tag2}
+    # delete tag
+    Delete A Tag  ${tag2}
+    Switch To Logs
+    Verify Log  ${user}  project${d}/${image}:${tag2}  tag  delete
+    Verify Log  ${user}  project${d}/${image}:${tag2}  tag  create  2
+    Docker Login  ${ip}  ${user}  ${pwd}
+    # pull artifact
+    Docker Pull  ${ip}/project${d}/${image}:${tag1}
+    Docker Logout  ${ip}
+    Verify Log  ${user}  project${d}/${image}:${sha256}  artifact  pull
+    Go Into Repo  project${d}  ${image}
+    # delete artifact
+    @{tag_list}  Create List  ${tag1}
+    Multi-delete Artifact  @{tag_list}
+    Switch To Logs
+    Verify Log  ${user}  project${d}/${image}:${sha256}  artifact  delete
+    Go Into Project  project${d}
+    # delete repository
+    Delete Repo  project${d}  ${image}
+    Switch To Logs
+    Verify Log  ${user}  project${d}/${image}  repository  delete
+    # delete project
+    Delete Project  project${d}
+    Logout Harbor
     Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
-    ${d}=  get current date  result_format=%m%s
-    Create An New Project  project${d}
-    Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  haproxy
-    Go Into Project  project${d}
-    Go Into Repo  haproxy
-    Scan Repo  latest  Succeed
+    Switch To Logs
+    Verify Log  ${user}  project${d}  project  delete
+    Switch To Log Rotation
+    Purge Now  1  Hours
+    Close Browser
+
+Test Case - Audit Log Forward
+    [Tags]  audit_log_forward  need_syslog_endpoint
+    ${SYSLOG_ENDPOINT_VALUE}=  Get Variable Value  ${SYSLOG_ENDPOINT}  ${EMPTY}
+    ${ES_ENDPOINT_VALUE}=  Get Variable Value  ${ES_ENDPOINT}  ${EMPTY}
+    Skip If  '${SYSLOG_ENDPOINT_VALUE}' == '${EMPTY}' or '${ES_ENDPOINT_VALUE}' == '${EMPTY}'
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${test_endpoint}=  Set Variable  test.endpoint
+    ${image}=  Set Variable  alpine
+    ${tag1}=  Set Variable  3.10
+    ${tag2}=  Set Variable  test
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  project${d}
+    Switch To Logs
+    Verify Log  ${HARBOR_ADMIN}  project${d}  project  create
+    Switch To System Settings
+    Retry Wait Element Should Be Disabled  ${skip_audit_log_database_checkbox}
+    Set Audit Log Forward  ${test_endpoint}  bad request: could not connect to the audit endpoint: ${test_endpoint}
+    # Set Audit Log Forward
+    Set Audit Log Forward  ${SYSLOG_ENDPOINT}  Configuration has been successfully saved.
+    Wait Until Element Is Enabled  ${skip_audit_log_database_checkbox}
+    # create artifact
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image}  ${tag1}  ${tag1}
+    Switch To Logs
+    Verify Log  ${HARBOR_ADMIN}  project${d}/${image}:${tag1}  artifact  create
+    Retry Action Keyword  Verify Log In Syslog Service  ${HARBOR_ADMIN}  project${d}/${image}:${tag1}  artifact  create
+    # Enable Skip Audit Log Database
+    Enable Skip Audit Log Database
+    Go Into Repo  project${d}  ${image}
+    Go Into Artifact  ${tag1}
+    # create tag
+    Add A New Tag   ${tag2}
+    Switch To Logs
+    Verify Log  ${HARBOR_ADMIN}  project${d}/${image}:${tag1}  artifact  create
+    Retry Action Keyword  Verify Log In Syslog Service  ${HARBOR_ADMIN}  project${d}/${image}:${tag2}  tag  create
+    Set Audit Log Forward  ${null}  Configuration has been successfully saved.
+    Retry Wait Element Should Be Disabled  ${skip_audit_log_database_checkbox}
+    Checkbox Should Not Be Selected  ${skip_audit_log_database_checkbox}
+    Go Into Repo  project${d}  ${image}
+    Go Into Artifact  ${tag1}
+    # delete tag
+    Delete A Tag  ${tag2}
+    Switch To Logs
+    Verify Log  ${HARBOR_ADMIN}  project${d}/${image}:${tag2}  tag  delete
+    Retry Action Keyword  Verify Log In Syslog Service  ${HARBOR_ADMIN}  project${d}/${image}:${tag2}  tag  delete  0
+    Close Browser
+
+Test Case - Export CVE
+    [Tags]  export_cve
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${user}=  Set Variable  user023
+    ${pwd}=  Set Variable  Test1@34
+    &{images}=  Create Dictionary  nginx=1.14.0  redis=5.0  alpine=3.9.4  photon=4.0-20210226  postgres=9.6
+    ${labels}=  Create List  sys_level_export${d}  proj_level_export${d}
+    ${cve_ids}=  Create List  CVE-2019-18224  CVE-2021-3997  CVE-2022-25315
+    ${nginx_sha256}=  Set Variable  sha256:d43aa3719937f9df0502f8258f3034a21b720b5b9bbf01bbfdbd09871aac8930
+    ${redis_sha256}=  Set Variable  sha256:e4b315ad03a1d1d9ff0c111e648a1a91066c09ead8352d3d6a48fa971a82922c
+    ${expected_cve_data}=  Create List  project${d}/nginx,${nginx_sha256},${cve_ids}[1],libudev1,232-25+deb9u4,,Medium,,"{""CVSS"": {""redhat"": {""V3Score"": 5.5, ""V3Vector"": ""CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H""}}}",Trivy
+    ...                                 project${d}/nginx,${nginx_sha256},${cve_ids}[1],libsystemd0,232-25+deb9u4,,Medium,,"{""CVSS"": {""redhat"": {""V3Score"": 5.5, ""V3Vector"": ""CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H""}}}",Trivy
+    ...                                 project${d}/redis,${redis_sha256},${cve_ids}[0],libidn2-0,2.0.5-1,2.0.5-1+deb10u1,Critical,CWE-787,"{""CVSS"": {""nvd"": {""V2Score"": 7.5, ""V3Score"": 9.8, ""V2Vector"": ""AV:N/AC:L/Au:N/C:P/I:P/A:P"", ""V3Vector"": ""CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H""}, ""redhat"": {""V3Score"": 5.6, ""V3Vector"": ""CVSS:3.0/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L""}}}",Trivy
+    ...                                 project${d}/redis,${redis_sha256},${cve_ids}[1],libudev1,241-7~deb10u2,,Medium,,"{""CVSS"": {""redhat"": {""V3Score"": 5.5, ""V3Vector"": ""CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H""}}}",Trivy
+    ...                                 project${d}/nginx,${nginx_sha256},${cve_ids}[2],libexpat1,2.2.0-2+deb9u1,2.2.0-2+deb9u5,Critical,CWE-190,"{""CVSS"": {""nvd"": {""V2Score"": 7.5, ""V3Score"": 9.8, ""V2Vector"": ""AV:N/AC:L/Au:N/C:P/I:P/A:P"", ""V3Vector"": ""CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H""}, ""redhat"": {""V3Score"": 9.8, ""V3Vector"": ""CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H""}}}",Trivy
+    ...                                 project${d}/redis,${redis_sha256},${cve_ids}[1],libsystemd0,241-7~deb10u2,,Medium,,"{""CVSS"": {""redhat"": {""V3Score"": 5.5, ""V3Vector"": ""CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H""}}}",Trivy
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Switch To System Labels
+    Create New Labels  ${labels}[0]
+    Logout Harbor
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Create An New Project And Go Into Project  project${d}
+    # push images
+    FOR  ${image}  IN  @{images.keys()}
+        Push Image With Tag  ${ip}  ${user}  ${pwd}  project${d}  ${image}  ${images['${image}']}  ${images['${image}']}
+    END
+    # scan images
+    Refresh Repositories
+    FOR  ${image}  IN  @{images.keys()}
+        Go Into Repo  project${d}  ${image}
+        Scan Repo  ${images['${image}']}  Succeed
+    END
+    Back Project Home  project${d}
+    Switch To Project Label
+    Create New Labels  ${labels}[1]
+    Go Into Repo  project${d}  nginx
+    Add Labels To Tag  ${images['nginx']}  ${labels}[0]
+    Go Into Repo  project${d}  redis
+    Add Labels To Tag  ${images['redis']}  ${labels}[1]
     Navigate To Projects
+    Should Not Be Export CVEs
+    Retry Element Click  //clr-dg-row[1]//label
+    Retry Element Click  //clr-dg-row[2]//label
+    Should Not Be Export CVEs
+    Export CVEs  project${d}  photon,postgres,nginx,redis  ${images['photon']},${images['nginx']},${images['redis']}  ${labels}  ${cve_ids}[0],${cve_ids}[1],${cve_ids}[2]
+    ${csv_file_path}=  Download Latest CVE CSV File
+    ${csv_file}=  OperatingSystem.Get File  ${csv_file_path}
+    ${csv_file_content}=  Create List  ${csv_file}
+    ${actual_cve_data}=  Split To Lines  @{csv_file_content}  1
+    Lists Should Be Equal  ${expected_cve_data}  ${actual_cve_data}  ignore_order=True
+    Close Browser
+
+Test Case - Helm CLI Push And Pull In Harbor
+    [Tags]  helm_push_and_push
+    Init Chrome Driver
+    ${user}=    Set Variable    user004
+    ${pwd}=    Set Variable    Test1@34
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Retry Keyword N Times When Error  4  Helm CLI Work Flow  ${user}  ${pwd}
+    Close Browser
+
+Test Case - Job Service Dashboard Job Queues
+    [Tags]  job_service_job_queues
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    # Pause GARBAGE_COLLECTION  PURGE_AUDIT_LOG  IMAGE_SCAN  RETENTION jobs
+    Switch To Job Queues
+    Pause Jobs  GARBAGE_COLLECTION  PURGE_AUDIT_LOG  IMAGE_SCAN  RETENTION
+    Check Button Status
+    Create An New Project And Go Into Project  project${d}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  photon  2.0_scan  2.0_scan
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  photon  3.0_scan  3.0_scan
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  photon  4.0_scan  4.0_scan
+    Switch To Tag Retention
+    Add A Tag Retention Rule
+    # Triggers two RETENTION jobs
+    ${retention_execution1}=  Execute Dry Run  photon  0/0
+    ${retention_execution2}=  Execute Run  photon  0/0
+    # Triggers three IMAGE_SCAN jobs
+    Go Into Repo  project${d}  photon
+    Retry Element Click  //clr-datagrid//label[contains(.,'Select All')]
+    Retry Button Click  ${scan_artifact_btn}
+    # Triggers a GARBAGE_COLLECTION job
+    ${gc_execution1}=  GC Now  dry_run=${true}
+    # Triggers a PURGE_AUDIT_LOG job
+    Switch to Log Rotation
+    Purge Now  2  Days  Running
+    # Check job queues
+    Switch To Job Queues
+    Check Pending Job Card  IMAGE_SCAN=3  RETENTION=2  Others=2  Total=7
+    Check Jobs Pending Count  IMAGE_SCAN=3  RETENTION=2  GARBAGE_COLLECTION=1  PURGE_AUDIT_LOG=1
+    Check Jobs Latency  GARBAGE_COLLECTION=${false}  PURGE_AUDIT_LOG=${false}  IMAGE_SCAN=${false}  RETENTION=${false}
+    # Resume GARBAGE_COLLECTION  RETENTION jobs
+    Resume Jobs  GARBAGE_COLLECTION  RETENTION
+    # Check job queues
+    Check Pending Job Card  IMAGE_SCAN=3  PURGE_AUDIT_LOG=1  Others=0  Total=4
+    Check Jobs Pending Count  IMAGE_SCAN=3  RETENTION=0  GARBAGE_COLLECTION=0  PURGE_AUDIT_LOG=1
+    Check Jobs Latency  GARBAGE_COLLECTION=${true}  PURGE_AUDIT_LOG=${false}  IMAGE_SCAN=${false}  RETENTION=${true}
+    # Check retention and GC status
     Go Into Project  project${d}
-    Set Vulnerabilty Serverity  0
-    Cannot pull image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  haproxy
+    Switch To Tag Retention
+    Check Retention Execution  ${retention_execution1}  Success  Yes
+    Check Retention Execution  ${retention_execution2}  Success  No
+    Retry GC Should Be Successful  ${gc_execution1}  success to run gc in job
+    # Stop PURGE_AUDIT_LOG  IMAGE_SCAN jobs
+    Switch To Job Queues
+    Stop Pending Jobs  PURGE_AUDIT_LOG  IMAGE_SCAN
+    # Check job queues
+    Check Pending Job Card  first_job=0  second_job=0  the_third_job=0  Total=0
+    Check Jobs Pending Count  IMAGE_SCAN=0  PURGE_AUDIT_LOG=0
+    Check Jobs Latency  GARBAGE_COLLECTION=${true}  PURGE_AUDIT_LOG=${true}  IMAGE_SCAN=${true}  RETENTION=${true}
+    # Triggers a PURGE_AUDIT_LOG job
+    Switch to Log Rotation
+    Purge Now  1  Days  Running
+    # Triggers three IMAGE_SCAN jobs
+    Go Into Repo  project${d}  photon
+    Retry Element Click  //clr-datagrid//label[contains(.,'Select All')]
+    Retry Button Click  ${scan_artifact_btn}
+    # Check job queues
+    Switch To Job Queues
+    Check Pending Job Card  IMAGE_SCAN=3  PURGE_AUDIT_LOG=1  Others=0  Total=4
+    Check Jobs Pending Count   IMAGE_SCAN=3  PURGE_AUDIT_LOG=1
+    Check Jobs Latency  IMAGE_SCAN=${false}  PURGE_AUDIT_LOG=${false}
+    # Stop all job
+    Stop All Pending Jobs
+    # Check job queues
+    Check Pending Job Card  first_job=0  second_job=0  the_third_job=0  Total=0
+    Check Jobs Pending Count   IMAGE_SCAN=0  PURGE_AUDIT_LOG=0
+    Check Jobs Latency  IMAGE_SCAN=${true}  PURGE_AUDIT_LOG=${true}
+    Resume Jobs  IMAGE_SCAN  PURGE_AUDIT_LOG
+    Close Browser
+
+Test Case - Job Service Dashboard Schedules
+    [Tags]  job_service_schedules
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${schedule_type}=  Set Variable  Custom
+    ${schedule_cron}=  Set Variable  0 0 12 * * ?
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  project${d}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  photon  2.0  2.0
+    ${replication_policy_name}  ${p2p_policy_name}  ${distribution_name}=  Create Schedules For Job Service Dashboard Schedules  project${d}  ${schedule_type}  ${schedule_cron}
+    Switch To Job Schedules
+    Check Schedule List  ${schedule_cron}
+    Pause All Schedules
+    Check Schedules Status Is Pause  project${d}  ${replication_policy_name}  ${p2p_policy_name}
+    Switch To Job Schedules
+    Resume All Schedules
+    Check Schedules Status Is Not Pause  project${d}  ${replication_policy_name}  ${p2p_policy_name}
+    Reset Schedules For Job Service Dashboard Schedules  project${d}  ${replication_policy_name}  ${p2p_policy_name}
+    Close Browser
+
+Test Case - Job Service Dashboard Workers
+    [Tags]  job_service_workers
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${project_name}=  Set Variable  project${d}
+    ${endpoint_name}=  Set Variable  e${d}
+    ${rule_name}=  Set Variable  rule${d}
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  ${project_name}
+    Switch to Registries
+    Create A New Endpoint  harbor  ${endpoint_name}  https://cicd.harbor.vmwarecna.net  ${null}  ${null}
+    Switch To Replication Manage
+    Create A Rule With Existing Endpoint  ${rule_name}  pull  nightly/test_replication  image  ${endpoint_name}  ${project_name}  bandwidth=50  bandwidth_unit=Mbps
+    Select Rule And Replicate  ${rule_name}
+    Check Latest Replication Job Status  InProgress
+    Switch To Job Workers
+    Retry Wait Until Page Contains Element  //clr-datagrid[.//button[text()='Worker ID']]//clr-dg-row//clr-dg-cell[text()='REPLICATION']
+    Retry Wait Until Page Contains Element  //app-donut-chart//div[text()=' 1/10 ']
+    Check Worker Log  REPLICATION  copying nightly/test_replication
+    Switch To Replication Manage
+    Select Rule  ${rule_name}
+    Retry Action Keyword  Check Latest Replication Job Status  Succeeded
+    Switch To Job Workers
+    Retry Wait Until Page Not Contains Element  //clr-datagrid[.//button[text()='Worker ID']]//clr-dg-row//clr-dg-cell[text()='REPLICATION']
+    Retry Wait Until Page Contains Element  //app-donut-chart//div[text()=' 0/10 ']
+    Close Browser
+
+Test Case - Retain Image Last Pull Time
+    [Tags]  retain_image_last_pull_time
+    Init Chrome Driver
+    ${d}=  Get Current Date  result_format=%m%s
+    ${image}=  Set Variable  alpine
+    ${tag}=  Set Variable  3.10
+    ${project_name}=  Set Variable  project${d}
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project  ${project_name}
+    Push Image With Tag  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  ${project_name}  ${image}  ${tag}  ${tag}
+    Switch To Configuration System Setting
+    Set Up Retain Image Last Pull Time  enable
+    Go Into Repo  ${project_name}  ${image}
+    Scan Repo  ${tag}  Succeed
+    Sleep  15
+    Reload Page
+    Retry Wait Element Visible  //clr-dg-row//clr-dg-cell[9]
+    ${last_pull_time}=  Get Text  //clr-dg-row//clr-dg-cell[9]
+    Should Be Empty  ${last_pull_time}
+    Switch To Configuration System Setting
+    Set Up Retain Image Last Pull Time  disable
+    Go Into Repo  ${project_name}  ${image}
+    Scan Repo  ${tag}  Succeed
+    Sleep  15
+    Reload Page
+    Retry Wait Element Visible  //clr-dg-row//clr-dg-cell[9]
+    ${last_pull_time}=  Get Text  //clr-dg-row//clr-dg-cell[9]
+    Should Not Be Empty  ${last_pull_time}
     Close Browser

@@ -2,34 +2,25 @@ from __future__ import absolute_import
 
 import unittest
 
-from testutils import harbor_server
+from testutils import harbor_server, suppress_urllib3_warning
 from testutils import TEARDOWN
 from testutils import ADMIN_CLIENT
 from library.project import Project
 from library.user import User
-from library.repository import push_image_to_project
+from library.repository import push_self_build_image_to_project
 from library.repository import Repository
 
 class TestProjects(unittest.TestCase):
-    @classmethod
+    @suppress_urllib3_warning
     def setUp(self):
-        project = Project()
-        self.project= project
-
-        user = User()
-        self.user= user
-
-        repo = Repository()
-        self.repo= repo
-
-    @classmethod
-    def tearDown(self):
-        print "Case completed"
+        self.project = Project()
+        self.user = User()
+        self.repo = Repository()
 
     @unittest.skipIf(TEARDOWN == False, "Test data won't be erased.")
-    def test_ClearData(self):
+    def tearDown(self):
         #1. Delete repository(RA) by admin;
-        self.repo.delete_repoitory(TestProjects.repo_name, **ADMIN_CLIENT)
+        self.repo.delete_repository(TestProjects.project_alice_name, TestProjects.repo_name.split('/')[1], **ADMIN_CLIENT)
 
         #2. Delete project(Alice);
         self.project.delete_project(TestProjects.project_alice_id, **ADMIN_CLIENT)
@@ -57,7 +48,7 @@ class TestProjects(unittest.TestCase):
         Tear down:
             1. Delete repository(RA) by admin;
             2. Delete project(Alice);
-            3. Delete user Alice, Bob and Carol.               
+            3. Delete user Alice, Bob and Carol.
         """
         url = ADMIN_CLIENT["endpoint"]
         user_alice_password = "Aa123456"
@@ -76,16 +67,16 @@ class TestProjects(unittest.TestCase):
         TestProjects.user_carol_id, user_carol_name = self.user.create_user(user_password = user_carol_password, **ADMIN_CLIENT)
 
         #2.1 Create private project(PA) by Alice
-        TestProjects.project_alice_id, project_alice_name = self.project.create_project(metadata = {"public": "false"}, **USER_ALICE_CLIENT)
+        TestProjects.project_alice_id, TestProjects.project_alice_name = self.project.create_project(metadata = {"public": "false"}, **USER_ALICE_CLIENT)
 
         #2.2 Add a repository to project(PA) by Alice
-        TestProjects.repo_name, _ = push_image_to_project(project_alice_name, harbor_server, user_alice_name, user_alice_password, "hello-world", "latest")
+        TestProjects.repo_name, _ = push_self_build_image_to_project(TestProjects.project_alice_name, harbor_server, user_alice_name, user_alice_password, "test_member", "latest")
 
         #3. Bob is not a member of project(PA);
         self.project.check_project_member_not_exist(TestProjects.project_alice_id, user_bob_name, **USER_ALICE_CLIENT)
 
         #4.1 Alice Add Bob as a guest member of project(PA)
-        member_id_bob = self.project.add_project_members(TestProjects.project_alice_id, TestProjects.user_bob_id, member_role_id = 3, **USER_ALICE_CLIENT)
+        member_id_bob = self.project.add_project_members(TestProjects.project_alice_id, user_id=TestProjects.user_bob_id, member_role_id = 3, **USER_ALICE_CLIENT)
 
         #4.2 Check Bob is a guest member of project(PA)
         self.project.check_project_members_exist(TestProjects.project_alice_id, user_bob_name, expected_member_role_id = 3, user_name = user_bob_name, user_password = user_bob_password, **USER_ALICE_CLIENT)

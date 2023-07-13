@@ -18,25 +18,30 @@ package config
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"gopkg.in/yaml.v2"
 
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
-	"gopkg.in/yaml.v2"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 const (
-	jobServiceProtocol          = "JOB_SERVICE_PROTOCOL"
-	jobServicePort              = "JOB_SERVICE_PORT"
-	jobServiceHTTPCert          = "JOB_SERVICE_HTTPS_CERT"
-	jobServiceHTTPKey           = "JOB_SERVICE_HTTPS_KEY"
-	jobServiceWorkerPoolBackend = "JOB_SERVICE_POOL_BACKEND"
-	jobServiceWorkers           = "JOB_SERVICE_POOL_WORKERS"
-	jobServiceRedisURL          = "JOB_SERVICE_POOL_REDIS_URL"
-	jobServiceRedisNamespace    = "JOB_SERVICE_POOL_REDIS_NAMESPACE"
-	jobServiceAuthSecret        = "JOBSERVICE_SECRET"
+	jobServiceProtocol                   = "JOB_SERVICE_PROTOCOL"
+	jobServicePort                       = "JOB_SERVICE_PORT"
+	jobServiceHTTPCert                   = "JOB_SERVICE_HTTPS_CERT"
+	jobServiceHTTPKey                    = "JOB_SERVICE_HTTPS_KEY"
+	jobServiceWorkerPoolBackend          = "JOB_SERVICE_POOL_BACKEND"
+	jobServiceWorkers                    = "JOB_SERVICE_POOL_WORKERS"
+	jobServiceRedisURL                   = "JOB_SERVICE_POOL_REDIS_URL"
+	jobServiceRedisNamespace             = "JOB_SERVICE_POOL_REDIS_NAMESPACE"
+	jobServiceRedisIdleConnTimeoutSecond = "JOB_SERVICE_POOL_REDIS_CONN_IDLE_TIMEOUT_SECOND"
+	jobServiceAuthSecret                 = "JOBSERVICE_SECRET"
+	coreURL                              = "CORE_URL"
 
 	// JobServiceProtocolHTTPS points to the 'https' protocol
 	JobServiceProtocolHTTPS = "https"
@@ -75,6 +80,15 @@ type Configuration struct {
 
 	// Logger configurations
 	LoggerConfigs []*LoggerConfig `yaml:"loggers,omitempty"`
+
+	// Metric configurations
+	Metric *MetricConfig `yaml:"metric,omitempty"`
+
+	// Reaper configurations
+	ReaperConfig *ReaperConfig `yaml:"reaper,omitempty"`
+
+	// MaxLogSizeReturnedMB is the max size of log returned by job log API
+	MaxLogSizeReturnedMB int `yaml:"max_retrieve_size_mb,omitempty"`
 }
 
 // HTTPSConfig keeps additional configurations when using https protocol
@@ -87,6 +101,10 @@ type HTTPSConfig struct {
 type RedisPoolConfig struct {
 	RedisURL  string `yaml:"redis_url"`
 	Namespace string `yaml:"namespace"`
+	// IdleTimeoutSecond closes connections after remaining idle for this duration. If the value
+	// is zero, then idle connections are not closed. Applications should set
+	// the timeout to a value less than the server's timeout.
+	IdleTimeoutSecond int64 `yaml:"idle_timeout_second"`
 }
 
 // PoolConfig keeps worker worker configurations.
@@ -95,6 +113,13 @@ type PoolConfig struct {
 	WorkerCount  uint             `yaml:"workers"`
 	Backend      string           `yaml:"backend"`
 	RedisPoolCfg *RedisPoolConfig `yaml:"redis_pool,omitempty"`
+}
+
+// MetricConfig used for configure metrics
+type MetricConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
+	Port    int    `yaml:"port"`
 }
 
 // CustomizedSettings keeps the customized settings of logger
@@ -114,6 +139,11 @@ type LoggerConfig struct {
 	Sweeper  *LogSweeperConfig  `yaml:"sweeper"`
 }
 
+type ReaperConfig struct {
+	MaxUpdateHour   int `yaml:"max_update_hours"`
+	MaxDanglingHour int `yaml:"max_dangling_hours"`
+}
+
 // Load the configuration options from the specified yaml file.
 // If the yaml file is specified and existing, load configurations from yaml file first;
 // If detecting env variables is specified, load configurations from env variables;
@@ -124,7 +154,7 @@ type LoggerConfig struct {
 func (c *Configuration) Load(yamlFilePath string, detectEnv bool) error {
 	if !utils.IsEmptyStr(yamlFilePath) {
 		// Try to load from file first
-		data, err := ioutil.ReadFile(yamlFilePath)
+		data, err := os.ReadFile(yamlFilePath)
 		if err != nil {
 			return err
 		}
@@ -143,13 +173,10 @@ func (c *Configuration) Load(yamlFilePath string, detectEnv bool) error {
 		redisAddress := c.PoolConfig.RedisPoolCfg.RedisURL
 		if !utils.IsEmptyStr(redisAddress) {
 			if _, err := url.Parse(redisAddress); err != nil {
-				if redisURL, ok := utils.TranslateRedisAddress(redisAddress); ok {
-					c.PoolConfig.RedisPoolCfg.RedisURL = redisURL
-				}
-			} else {
-				if !strings.HasPrefix(redisAddress, redisSchema) {
-					c.PoolConfig.RedisPoolCfg.RedisURL = fmt.Sprintf("%s%s", redisSchema, redisAddress)
-				}
+				return fmt.Errorf("bad redis url for jobservice, %s", redisAddress)
+			}
+			if !strings.Contains(redisAddress, "://") {
+				c.PoolConfig.RedisPoolCfg.RedisURL = fmt.Sprintf("%s%s", redisSchema, redisAddress)
 			}
 		}
 	}
@@ -161,6 +188,11 @@ func (c *Configuration) Load(yamlFilePath string, detectEnv bool) error {
 // GetAuthSecret get the auth secret from the env
 func GetAuthSecret() string {
 	return utils.ReadEnv(jobServiceAuthSecret)
+}
+
+// GetCoreURL get the core url from the env
+func GetCoreURL() string {
+	return utils.ReadEnv(coreURL)
 }
 
 // GetUIAuthSecret get the auth secret of UI side
@@ -241,8 +273,20 @@ func (c *Configuration) loadEnvs() {
 			}
 			c.PoolConfig.RedisPoolCfg.Namespace = rn
 		}
-	}
 
+		it := utils.ReadEnv(jobServiceRedisIdleConnTimeoutSecond)
+		if !utils.IsEmptyStr(it) {
+			if c.PoolConfig.RedisPoolCfg == nil {
+				c.PoolConfig.RedisPoolCfg = &RedisPoolConfig{}
+			}
+			v, err := strconv.Atoi(it)
+			if err != nil {
+				log.Warningf("Invalid idle timeout second: %s, will use 0 instead", it)
+			} else {
+				c.PoolConfig.RedisPoolCfg.IdleTimeoutSecond = int64(v)
+			}
+		}
+	}
 }
 
 // Check if the configurations are valid settings.
@@ -288,8 +332,7 @@ func (c *Configuration) validate() error {
 		if utils.IsEmptyStr(c.PoolConfig.RedisPoolCfg.RedisURL) {
 			return errors.New("URL of redis worker is empty")
 		}
-
-		if !strings.HasPrefix(c.PoolConfig.RedisPoolCfg.RedisURL, redisSchema) {
+		if !strings.Contains(c.PoolConfig.RedisPoolCfg.RedisURL, "://") {
 			return errors.New("invalid redis URL")
 		}
 
@@ -313,4 +356,20 @@ func (c *Configuration) validate() error {
 	}
 
 	return nil // valid
+}
+
+// MaxUpdateDuration the max time for an execution can be updated by task
+func MaxUpdateDuration() time.Duration {
+	if DefaultConfig != nil && DefaultConfig.ReaperConfig != nil && DefaultConfig.ReaperConfig.MaxUpdateHour > 24 {
+		return time.Duration(DefaultConfig.ReaperConfig.MaxUpdateHour) * time.Hour
+	}
+	return 24 * time.Hour
+}
+
+// MaxDanglingHour the max time for an execution can be dangling state
+func MaxDanglingHour() int {
+	if DefaultConfig != nil && DefaultConfig.ReaperConfig != nil && DefaultConfig.ReaperConfig.MaxDanglingHour > 24*7 {
+		return DefaultConfig.ReaperConfig.MaxDanglingHour
+	}
+	return 24 * 7
 }

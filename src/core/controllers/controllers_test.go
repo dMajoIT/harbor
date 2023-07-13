@@ -14,24 +14,26 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
-	// "net/url"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
-	"fmt"
-	"os"
-	"strings"
-
-	"github.com/astaxie/beego"
-	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/models"
-	utilstest "github.com/goharbor/harbor/src/common/utils/test"
-	"github.com/goharbor/harbor/src/core/config"
-	"github.com/goharbor/harbor/src/core/proxy"
+	"github.com/beego/beego/v2/server/web"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/common"
+	utilstest "github.com/goharbor/harbor/src/common/utils/test"
+	"github.com/goharbor/harbor/src/core/middlewares"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/orm"
+	_ "github.com/goharbor/harbor/src/pkg/config/db"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 )
 
 func init() {
@@ -39,18 +41,13 @@ func init() {
 	dir := filepath.Dir(file)
 	dir = filepath.Join(dir, "..")
 	apppath, _ := filepath.Abs(dir)
-	beego.BConfig.WebConfig.Session.SessionOn = true
-	beego.TestBeegoInit(apppath)
-	beego.AddTemplateExt("htm")
+	web.BConfig.WebConfig.Session.SessionOn = true
+	web.TestBeegoInit(apppath)
+	web.AddTemplateExt("htm")
 
-	beego.Router("/", &IndexController{})
-
-	beego.Router("/c/login", &CommonController{}, "post:Login")
-	beego.Router("/c/log_out", &CommonController{}, "get:LogOut")
-	beego.Router("/c/reset", &CommonController{}, "post:ResetPassword")
-	beego.Router("/c/userExists", &CommonController{}, "post:UserExists")
-	beego.Router("/c/sendEmail", &CommonController{}, "get:SendResetEmail")
-	beego.Router("/v2/*", &RegistryProxy{}, "*:Handle")
+	web.Router("/c/login", &CommonController{}, "post:Login")
+	web.Router("/c/log_out", &CommonController{}, "get:LogOut")
+	web.Router("/c/userExists", &CommonController{}, "post:UserExists")
 }
 
 func TestMain(m *testing.M) {
@@ -61,82 +58,42 @@ func TestMain(m *testing.M) {
 	}
 }
 
-// TestUserResettable
-func TestUserResettable(t *testing.T) {
-	assert := assert.New(t)
-	DBAuthConfig := map[string]interface{}{
-		common.AUTHMode:        common.DBAuth,
-		common.CfgExpiration:   5,
-		common.TokenExpiration: 30,
-	}
+func TestRedirectForOIDC(t *testing.T) {
+	ctx := lib.WithAuthMode(orm.Context(), common.DBAuth)
+	assert.False(t, redirectForOIDC(ctx, "nonexist"))
+	ctx = lib.WithAuthMode(orm.Context(), common.OIDCAuth)
+	assert.True(t, redirectForOIDC(ctx, "nonexist"))
+	assert.False(t, redirectForOIDC(ctx, "admin"))
 
-	LDAPAuthConfig := map[string]interface{}{
-		common.AUTHMode:        common.LDAPAuth,
-		common.CfgExpiration:   5,
-		common.TokenExpiration: 30,
-	}
-	config.InitWithSettings(LDAPAuthConfig)
-	u1 := &models.User{
-		UserID:   3,
-		Username: "daniel",
-		Email:    "daniel@test.com",
-	}
-	u2 := &models.User{
-		UserID:   1,
-		Username: "jack",
-		Email:    "jack@test.com",
-	}
-	assert.False(isUserResetable(u1))
-	assert.True(isUserResetable(u2))
-	config.InitWithSettings(DBAuthConfig)
-	assert.True(isUserResetable(u1))
 }
 
 // TestMain is a sample to run an endpoint test
 func TestAll(t *testing.T) {
 	config.InitWithSettings(utilstest.GetUnitTestConfig())
-	proxy.Init()
 	assert := assert.New(t)
+	handler := http.Handler(web.BeeApp.Handlers)
+	mws := middlewares.MiddleWares()
+	for i := len(mws) - 1; i >= 0; i-- {
+		if mws[i] == nil {
+			continue
+		}
+		handler = mws[i](handler)
+	}
 
 	r, _ := http.NewRequest("POST", "/c/login", nil)
 	w := httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(401), w.Code, "'/c/login' httpStatusCode should be 401")
+	handler.ServeHTTP(w, r)
+	assert.Equal(http.StatusForbidden, w.Code, "'/c/login' httpStatusCode should be 403")
 
 	r, _ = http.NewRequest("GET", "/c/log_out", nil)
 	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
+	handler.ServeHTTP(w, r)
 	assert.Equal(int(200), w.Code, "'/c/log_out' httpStatusCode should be 200")
 	assert.Equal(true, strings.Contains(fmt.Sprintf("%s", w.Body), ""), "http respond should be empty")
 
-	r, _ = http.NewRequest("POST", "/c/reset", nil)
-	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(400), w.Code, "'/c/reset' httpStatusCode should be 400")
-
 	r, _ = http.NewRequest("POST", "/c/userExists", nil)
 	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(500), w.Code, "'/c/userExists' httpStatusCode should be 500")
-
-	r, _ = http.NewRequest("GET", "/c/sendEmail", nil)
-	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(400), w.Code, "'/c/sendEmail' httpStatusCode should be 400")
-
-	r, _ = http.NewRequest("GET", "/v2/", nil)
-	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(200), w.Code, "ping v2 should get a 200 response")
-
-	r, _ = http.NewRequest("GET", "/v2/noproject/manifests/1.0", nil)
-	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(400), w.Code, "GET v2/noproject/manifests/1.0 should get a 400 response")
-
-	r, _ = http.NewRequest("GET", "/v2/project/notexist/manifests/1.0", nil)
-	w = httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(w, r)
-	assert.Equal(int(404), w.Code, "GET v2/noproject/manifests/1.0 should get a 404 response")
+	handler.ServeHTTP(w, r)
+	assert.Equal(http.StatusForbidden, w.Code, "'/c/userExists' httpStatusCode should be 403")
 
 }

@@ -15,42 +15,40 @@
 package period
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"time"
 
-	"context"
 	"github.com/gocraft/work"
+	"github.com/gomodule/redigo/redis"
+
+	comUtils "github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/common/rds"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/lcm"
 	"github.com/goharbor/harbor/src/jobservice/logger"
-	"github.com/gomodule/redigo/redis"
-	"github.com/robfig/cron"
+	"github.com/goharbor/harbor/src/lib"
 )
 
 const (
 	enqueuerSleep   = 2 * time.Minute
 	enqueuerHorizon = 4 * time.Minute
-	neverExecuted   = 365 * 24 * time.Hour
 
 	// PeriodicExecutionMark marks the scheduled job to a periodic execution
 	PeriodicExecutionMark = "_job_kind_periodic_"
 )
 
 type enqueuer struct {
-	namespace   string
-	context     context.Context
-	pool        *redis.Pool
-	policyStore *policyStore
-	ctl         lcm.Controller
+	namespace string
+	context   context.Context
+	pool      *redis.Pool
+	ctl       lcm.Controller
 	// Diff with other nodes
 	nodeID string
 	// Track the error of enqueuing
 	lastEnqueueErr error
-	// For stop
-	stopChan chan bool
 }
 
 func newEnqueuer(ctx context.Context, namespace string, pool *redis.Pool, ctl lcm.Controller) *enqueuer {
@@ -61,32 +59,23 @@ func newEnqueuer(ctx context.Context, namespace string, pool *redis.Pool, ctl lc
 	}
 
 	return &enqueuer{
-		context:     ctx,
-		namespace:   namespace,
-		pool:        pool,
-		policyStore: newPolicyStore(ctx, namespace, pool),
-		ctl:         ctl,
-		stopChan:    make(chan bool, 1),
-		nodeID:      nodeID.(string),
+		context:   ctx,
+		namespace: namespace,
+		pool:      pool,
+		ctl:       ctl,
+		nodeID:    nodeID.(string),
 	}
 }
 
 // Blocking call
-func (e *enqueuer) start() error {
-	// Load policies first when starting
-	if err := e.policyStore.load(); err != nil {
-		return err
-	}
-
+func (e *enqueuer) start() {
 	go e.loop()
-	logger.Info("Periodic enqueuer is started")
-
-	return e.policyStore.serve()
+	logger.Info("Scheduler: periodic enqueuer is started")
 }
 
 func (e *enqueuer) loop() {
 	defer func() {
-		logger.Info("Periodic enqueuer is stopped")
+		logger.Info("Scheduler: periodic enqueuer is stopped")
 	}()
 
 	// Do enqueue immediately when starting
@@ -98,14 +87,9 @@ func (e *enqueuer) loop() {
 
 	for {
 		select {
-		case <-e.stopChan:
-			// Stop policy store now
-			e.policyStore.stopChan <- true
-			return
+		case <-e.context.Done():
+			return // exit
 		case <-timer.C:
-			// Pause the timer for completing the processing this time
-			timer.Reset(neverExecuted)
-
 			// Check and enqueue.
 			// Set next turn with lower priority to balance workload with long
 			// round time if it hits.
@@ -157,40 +141,38 @@ func (e *enqueuer) enqueue() {
 	// Reset error track
 	e.lastEnqueueErr = nil
 
-	e.policyStore.Iterate(func(id string, p *Policy) bool {
+	// Load policies and schedule next jobs for them
+	pls, err := Load(e.namespace, conn)
+	if err != nil {
+		// Log error
+		logger.Errorf("%s:%s", err, "enqueue error: enqueuer")
+		return
+	}
+
+	for _, p := range pls {
 		e.scheduleNextJobs(p, conn)
-		return true
-	})
+	}
 }
 
 // scheduleNextJobs schedules job for next time slots based on the policy
 func (e *enqueuer) scheduleNextJobs(p *Policy, conn redis.Conn) {
-	nowTime := time.Unix(time.Now().Unix(), 0)
+	// Follow UTC time spec
+	nowTime := time.Unix(time.Now().UTC().Unix(), 0).UTC()
 	horizon := nowTime.Add(enqueuerHorizon)
-
-	schedule, err := cron.Parse(p.CronSpec)
+	schedule, err := comUtils.CronParser().Parse(p.CronSpec)
 	if err != nil {
 		// The cron spec should be already checked at upper layers.
 		// Just in cases, if error occurred, ignore it
 		e.lastEnqueueErr = err
-		logger.Errorf("Invalid corn spec in periodic policy %s %s: %s", p.JobName, p.ID, err)
+		logger.Errorf("Invalid corn spec in periodic policy %s %s: %s", lib.TrimLineBreaks(p.JobName), p.ID, err)
 	} else {
-		if p.JobParameters == nil {
-			p.JobParameters = make(job.Parameters)
-		}
-
-		// Clone job parameters
-		wJobParams := make(job.Parameters)
-		if p.JobParameters != nil && len(p.JobParameters) > 0 {
-			for k, v := range p.JobParameters {
-				wJobParams[k] = v
-			}
-		}
-		// Add extra argument for job running
-		// Notes: Only for system using
-		wJobParams[PeriodicExecutionMark] = true
 		for t := schedule.Next(nowTime); t.Before(horizon); t = schedule.Next(t) {
 			epoch := t.Unix()
+
+			// Clone parameters
+			// Add extra argument for job running too.
+			// Notes: Only for system using
+			wJobParams := cloneParameters(p.JobParameters, epoch)
 
 			// Create an execution (job) based on the periodic job template (policy)
 			j := &work.Job{
@@ -241,7 +223,7 @@ func (e *enqueuer) scheduleNextJobs(p *Policy, conn redis.Conn) {
 				break // Probably redis connection is broken
 			}
 
-			logger.Debugf("Scheduled execution for periodic job %s:%s at %d", j.Name, p.ID, epoch)
+			logger.Debugf("Scheduled execution for periodic job %s:%s at %d", lib.TrimLineBreaks(j.Name), p.ID, epoch)
 		}
 	}
 }
@@ -315,4 +297,17 @@ func (e *enqueuer) shouldEnqueue() bool {
 	}
 
 	return false
+}
+
+func cloneParameters(params job.Parameters, epoch int64) job.Parameters {
+	p := make(job.Parameters)
+
+	// Clone parameters to a new param map
+	for k, v := range params {
+		p[k] = v
+	}
+
+	p[PeriodicExecutionMark] = fmt.Sprintf("%d", epoch)
+
+	return p
 }

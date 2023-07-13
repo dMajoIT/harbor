@@ -3,13 +3,19 @@ package logger
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"testing"
 
 	"github.com/goharbor/harbor/src/jobservice/config"
 	"github.com/goharbor/harbor/src/jobservice/logger/backend"
+)
+
+const (
+	fakeLogFile = "f00000000000000000000000.log"
+	fakeLogID   = "f00000000000000000000000"
+	fakeJobID   = "f00000000000000000000001"
+	fakeJobID2  = "f00000000000000000000002"
 )
 
 // Test one single std logger
@@ -48,7 +54,7 @@ func TestGetLoggerSingleFile(t *testing.T) {
 
 	lSettings := map[string]interface{}{}
 	lSettings["base_dir"] = os.TempDir()
-	lSettings["filename"] = fmt.Sprintf("%s.log", "fake_job_ID")
+	lSettings["filename"] = fmt.Sprintf("%s.log", fakeJobID)
 	defer func() {
 		if err := os.Remove(path.Join(os.TempDir(), lSettings["filename"].(string))); err != nil {
 			t.Error(err)
@@ -67,7 +73,7 @@ func TestGetLoggerSingleFile(t *testing.T) {
 func TestGetLoggersMulti(t *testing.T) {
 	lSettings := map[string]interface{}{}
 	lSettings["base_dir"] = os.TempDir()
-	lSettings["filename"] = fmt.Sprintf("%s.log", "fake_job_ID2")
+	lSettings["filename"] = fmt.Sprintf("%s.log", fakeJobID2)
 	defer func() {
 		if err := os.Remove(path.Join(os.TempDir(), lSettings["filename"].(string))); err != nil {
 			t.Error(err)
@@ -142,8 +148,8 @@ func TestGetGetter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	logFile := path.Join(os.TempDir(), "fake_log_file.log")
-	if err := ioutil.WriteFile(logFile, []byte("hello log getter"), 0644); err != nil {
+	logFile := path.Join(os.TempDir(), fakeLogFile)
+	if err := os.WriteFile(logFile, []byte("hello log getter"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -152,7 +158,7 @@ func TestGetGetter(t *testing.T) {
 		}
 	}()
 
-	data, err := g.Retrieve("fake_log_file")
+	data, err := g.Retrieve(fakeLogID)
 	if err != nil {
 		t.Error(err)
 	}

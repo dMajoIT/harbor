@@ -1,4 +1,6 @@
-FROM photon:2.0
+ARG harbor_base_image_version
+ARG harbor_base_namespace
+FROM ${harbor_base_namespace}/harbor-prepare-base:${harbor_base_image_version}
 
 ENV LANG en_US.UTF-8
 
@@ -6,12 +8,9 @@ WORKDIR /usr/src/app
 
 RUN mkdir -p /harbor_make
 
-RUN tdnf install -y python3 \
-    && tdnf install -y python3-pip
-RUN pip3 install pipenv==2018.11.26
-
-COPY make/photon/prepare /usr/src/app
+COPY make/photon/prepare/Pipfile.lock make/photon/prepare/Pipfile /usr/src/app/
 RUN set -ex && pipenv install --deploy --system
+COPY make/photon/prepare /usr/src/app
 
 ENTRYPOINT [ "python3", "main.py" ]
 

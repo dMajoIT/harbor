@@ -1,11 +1,27 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package rds
 
 import (
 	"fmt"
-	"github.com/garyburd/redigo/redis"
-	"github.com/goharbor/harbor/src/jobservice/common/utils"
-	"github.com/pkg/errors"
 	"time"
+
+	"github.com/gomodule/redigo/redis"
+
+	"github.com/goharbor/harbor/src/jobservice/common/utils"
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
 // ErrNoElements is a pre defined error to describe the case that no elements got
@@ -121,36 +137,4 @@ func ReleaseLock(conn redis.Conn, lockerKey string, lockerID string) error {
 	}
 
 	return errors.New("locker ID mismatch")
-}
-
-// ZPopMin pops the element with lowest score in the zset
-func ZPopMin(conn redis.Conn, key string) (interface{}, error) {
-	err := conn.Send("MULTI")
-	err = conn.Send("ZRANGE", key, 0, 0) // lowest one
-	err = conn.Send("ZREMRANGEBYRANK", key, 0, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	replies, err := redis.Values(conn.Do("EXEC"))
-	if err != nil {
-		return nil, err
-	}
-
-	if len(replies) < 2 {
-		return nil, errors.Errorf("zpopmin error: not enough results returned, expected %d but got %d", 2, len(replies))
-	}
-
-	zrangeReply := replies[0]
-	if zrangeReply != nil {
-		if elements, ok := zrangeReply.([]interface{}); ok {
-			if len(elements) == 0 {
-				return nil, ErrNoElements
-			}
-
-			return elements[0], nil
-		}
-	}
-
-	return nil, errors.New("zpopmin error: bad result reply")
 }

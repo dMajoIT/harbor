@@ -20,8 +20,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/goharbor/harbor/src/registryctl/auth"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/registryctl/auth"
+	"github.com/goharbor/harbor/src/registryctl/config"
 )
 
 type fakeAuthenticator struct {
@@ -61,7 +63,8 @@ func TestNewAuthHandler(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		assert.Equal(t, c.responseCode, w.Code, "unexpected response code")
 	}
-	handler := NewHandlerChain()
+	cf := config.Configuration{}
+	handler := NewHandlerChain(cf)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "http://localhost/api/health", nil)
 	handler.ServeHTTP(w, r)

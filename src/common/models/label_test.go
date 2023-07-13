@@ -17,51 +17,52 @@ package models
 import (
 	"testing"
 
-	"github.com/astaxie/beego/validation"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/pkg/label/model"
 )
 
 func TestValidOfLabel(t *testing.T) {
 	cases := []struct {
-		label    *Label
+		label    *model.Label
 		hasError bool
 	}{
 		{
-			label: &Label{
+			label: &model.Label{
 				Name: "",
 			},
 			hasError: true,
 		},
 		{
-			label: &Label{
+			label: &model.Label{
 				Name:  "test",
 				Scope: "",
 			},
 			hasError: true,
 		},
 		{
-			label: &Label{
+			label: &model.Label{
 				Name:  "test",
 				Scope: "invalid_scope",
 			},
 			hasError: true,
 		},
 		{
-			label: &Label{
+			label: &model.Label{
 				Name:  "test",
 				Scope: "g",
 			},
 			hasError: false,
 		},
 		{
-			label: &Label{
+			label: &model.Label{
 				Name:  "test",
 				Scope: "p",
 			},
 			hasError: true,
 		},
 		{
-			label: &Label{
+			label: &model.Label{
 				Name:      "test",
 				Scope:     "p",
 				ProjectID: -1,
@@ -69,7 +70,7 @@ func TestValidOfLabel(t *testing.T) {
 			hasError: true,
 		},
 		{
-			label: &Label{
+			label: &model.Label{
 				Name:      "test",
 				Scope:     "p",
 				ProjectID: 1,
@@ -79,8 +80,11 @@ func TestValidOfLabel(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		v := &validation.Validation{}
-		c.label.Valid(v)
-		assert.Equal(t, c.hasError, v.HasErrors())
+		err := c.label.Valid()
+		if c.hasError {
+			assert.NotNil(t, err)
+		} else {
+			assert.Nil(t, err)
+		}
 	}
 }

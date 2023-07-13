@@ -16,14 +16,21 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/common"
+	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/config"
 	"github.com/goharbor/harbor/src/jobservice/logger"
 	"github.com/goharbor/harbor/src/jobservice/tests"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
-	"testing"
-	"time"
+	libcfg "github.com/goharbor/harbor/src/lib/config"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 )
 
 // BootStrapTestSuite tests bootstrap
@@ -37,6 +44,10 @@ type BootStrapTestSuite struct {
 
 // SetupSuite prepares test suite
 func (suite *BootStrapTestSuite) SetupSuite() {
+	dao.PrepareTestForPostgresSQL()
+
+	libcfg.DefaultCfgManager = common.InMemoryCfgManager
+
 	// Load configurations
 	err := config.DefaultConfig.Load("../config_test.yml", true)
 	require.NoError(suite.T(), err, "load configurations error: %s", err)
@@ -50,21 +61,24 @@ func (suite *BootStrapTestSuite) SetupSuite() {
 	err = logger.Init(suite.ctx)
 	require.NoError(suite.T(), err, "init logger: nil error expected but got %s", err)
 
-	suite.jobService = &Bootstrap{}
+	suite.jobService = &Bootstrap{
+		syncEnabled: false,
+	}
 	suite.jobService.SetJobContextInitializer(nil)
 }
 
 // TearDownSuite clears the test suite
 func (suite *BootStrapTestSuite) TearDownSuite() {
-	suite.cancel()
-
 	pool := tests.GiveMeRedisPool()
 	conn := pool.Get()
 	defer func() {
 		_ = conn.Close()
 	}()
 
-	_ = tests.ClearAll(tests.GiveMeTestNamespace(), conn)
+	err := tests.ClearAll(fmt.Sprintf("{%s}", tests.GiveMeTestNamespace()), conn)
+	require.NoError(suite.T(), err, "clear rdb error")
+
+	suite.cancel()
 }
 
 // TestBootStrapTestSuite is entry of go test

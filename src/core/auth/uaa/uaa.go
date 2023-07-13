@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,18 +15,20 @@
 package uaa
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/common/utils/log"
 	"github.com/goharbor/harbor/src/common/utils/uaa"
 	"github.com/goharbor/harbor/src/core/auth"
-	"github.com/goharbor/harbor/src/core/config"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/log"
+	userpkg "github.com/goharbor/harbor/src/pkg/user"
 )
 
 // Auth is the implementation of AuthenticateHelper to access uaa for authentication.
@@ -34,11 +36,12 @@ type Auth struct {
 	sync.Mutex
 	client uaa.Client
 	auth.DefaultAuthenticateHelper
+	userMgr userpkg.Manager
 }
 
 // Authenticate ...
-func (u *Auth) Authenticate(m models.AuthModel) (*models.User, error) {
-	if err := u.ensureClient(); err != nil {
+func (u *Auth) Authenticate(ctx context.Context, m models.AuthModel) (*models.User, error) {
+	if err := u.ensureClient(ctx); err != nil {
 		return nil, err
 	}
 	t, err := u.client.PasswordAuth(m.Principal, m.Password)
@@ -60,7 +63,7 @@ func (u *Auth) Authenticate(m models.AuthModel) (*models.User, error) {
 
 // OnBoardUser will check if a user exists in user table, if not insert the user and
 // put the id in the pointer of user model, if it does exist, return the user's profile.
-func (u *Auth) OnBoardUser(user *models.User) error {
+func (u *Auth) OnBoardUser(ctx context.Context, user *models.User) error {
 	user.Username = strings.TrimSpace(user.Username)
 	if len(user.Username) == 0 {
 		return fmt.Errorf("the Username is empty")
@@ -70,41 +73,38 @@ func (u *Auth) OnBoardUser(user *models.User) error {
 	}
 	fillEmailRealName(user)
 	user.Comment = "From UAA"
-	return dao.OnBoardUser(user)
+	return u.userMgr.Onboard(ctx, user)
 }
 
 func fillEmailRealName(user *models.User) {
 	if len(user.Realname) == 0 {
 		user.Realname = user.Username
 	}
-	if len(user.Email) == 0 {
-		// TODO: handle the case when user.Username itself is an email address.
-		user.Email = user.Username + "@uaa.placeholder"
+	if len(user.Email) == 0 && strings.Contains(user.Username, "@") {
+		user.Email = user.Username
 	}
 }
 
 // PostAuthenticate will check if user exists in DB, if not on Board user, if he does, update the profile.
-func (u *Auth) PostAuthenticate(user *models.User) error {
-	dbUser, err := dao.GetUser(models.User{Username: user.Username})
-	if err != nil {
+func (u *Auth) PostAuthenticate(ctx context.Context, user *models.User) error {
+	dbUser, err := u.userMgr.GetByName(ctx, user.Username)
+	if errors.IsNotFoundErr(err) {
+		return u.OnBoardUser(ctx, user)
+	} else if err != nil {
 		return err
 	}
-	if dbUser == nil {
-		return u.OnBoardUser(user)
-	}
 	user.UserID = dbUser.UserID
-	user.HasAdminRole = dbUser.HasAdminRole
+	user.SysAdminFlag = dbUser.SysAdminFlag
 	fillEmailRealName(user)
-	if err2 := dao.ChangeUserProfile(*user, "Email", "Realname"); err2 != nil {
+	if err2 := u.userMgr.UpdateProfile(ctx, user, "Email", "Realname"); err2 != nil {
 		log.Warningf("Failed to update user profile, user: %s, error: %v", user.Username, err2)
 	}
-
 	return nil
 }
 
 // SearchUser search user on uaa server, transform it to Harbor's user model
-func (u *Auth) SearchUser(username string) (*models.User, error) {
-	if err := u.ensureClient(); err != nil {
+func (u *Auth) SearchUser(ctx context.Context, username string) (*models.User, error) {
+	if err := u.ensureClient(ctx); err != nil {
 		return nil, err
 	}
 	l, err := u.client.SearchUser(username)
@@ -115,7 +115,7 @@ func (u *Auth) SearchUser(username string) (*models.User, error) {
 		return nil, nil
 	}
 	if len(l) > 1 {
-		return nil, fmt.Errorf("Multiple entries found for username: %s", username)
+		return nil, fmt.Errorf("multiple entries found for username: %s", username)
 	}
 	e := l[0]
 	email := ""
@@ -128,9 +128,9 @@ func (u *Auth) SearchUser(username string) (*models.User, error) {
 	}, nil
 }
 
-func (u *Auth) ensureClient() error {
+func (u *Auth) ensureClient(ctx context.Context) error {
 	var cfg *uaa.ClientConfig
-	UAASettings, err := config.UAASettings()
+	UAASettings, err := config.UAASettings(ctx)
 	//	log.Debugf("Uaa settings: %+v", UAASettings)
 	if err != nil {
 		log.Warningf("Failed to get UAA setting from Admin Server, error: %v", err)
@@ -158,5 +158,7 @@ func (u *Auth) ensureClient() error {
 	return nil
 }
 func init() {
-	auth.Register(common.UAAAuth, &Auth{})
+	auth.Register(common.UAAAuth, &Auth{
+		userMgr: userpkg.New(),
+	})
 }

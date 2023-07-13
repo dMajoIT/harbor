@@ -17,6 +17,8 @@ package utils
 import (
 	"encoding/base64"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -91,12 +93,21 @@ func TestParseRepository(t *testing.T) {
 }
 
 func TestEncrypt(t *testing.T) {
-	content := "content"
-	salt := "salt"
-	result := Encrypt(content, salt)
+	tests := map[string]struct {
+		content string
+		salt    string
+		alg     string
+		want    string
+	}{
+		"sha1 test":   {content: "content", salt: "salt", alg: SHA1, want: "dc79e76c88415c97eb089d9cc80b4ab0"},
+		"sha256 test": {content: "content", salt: "salt", alg: SHA256, want: "83d3d6f3e7cacb040423adf7ced63d21"},
+	}
 
-	if result != "dc79e76c88415c97eb089d9cc80b4ab0" {
-		t.Errorf("unexpected result: %s != %s", result, "dc79e76c88415c97eb089d9cc80b4ab0")
+	for name, tc := range tests {
+		got := Encrypt(tc.content, tc.salt, tc.alg)
+		if !reflect.DeepEqual(tc.want, got) {
+			t.Errorf("%s: expected: %v, got: %v", name, tc.want, got)
+		}
 	}
 }
 
@@ -143,40 +154,10 @@ func TestGenerateRandomString(t *testing.T) {
 	}
 }
 
-func TestParseLink(t *testing.T) {
-	raw := ""
-	links := ParseLink(raw)
-	if len(links) != 0 {
-		t.Errorf("unexpected length: %d != %d", len(links), 0)
-	}
-	raw = "a;b,c"
-	links = ParseLink(raw)
-	if len(links) != 0 {
-		t.Errorf("unexpected length: %d != %d", len(links), 0)
-	}
-
-	raw = `</api/users?page=1&page_size=100>; rel="prev"`
-	links = ParseLink(raw)
-	if len(links) != 1 {
-		t.Errorf("unexpected length: %d != %d", len(links), 1)
-	}
-	prev := `/api/users?page=1&page_size=100`
-	if links.Prev() != prev {
-		t.Errorf("unexpected prev: %s != %s", links.Prev(), prev)
-	}
-
-	raw = `</api/users?page=1&page_size=100>; rel="prev", </api/users?page=3&page_size=100>; rel="next"`
-	links = ParseLink(raw)
-	if len(links) != 2 {
-		t.Errorf("unexpected length: %d != %d", len(links), 2)
-	}
-	prev = `/api/users?page=1&page_size=100`
-	if links.Prev() != prev {
-		t.Errorf("unexpected prev: %s != %s", links.Prev(), prev)
-	}
-	next := `/api/users?page=3&page_size=100`
-	if links.Next() != next {
-		t.Errorf("unexpected prev: %s != %s", links.Next(), next)
+func TestGenerateRandomStringWithLen(t *testing.T) {
+	str := GenerateRandomStringWithLen(16)
+	if len(str) != 16 {
+		t.Errorf("Failed to generate ramdom string with fixed length.")
 	}
 }
 
@@ -337,29 +318,6 @@ func TestSafeCastFloat64(t *testing.T) {
 	}
 }
 
-func TestParseOfftime(t *testing.T) {
-	cases := []struct {
-		offtime int64
-		hour    int
-		minite  int
-		second  int
-	}{
-		{0, 0, 0, 0},
-		{1, 0, 0, 1},
-		{60, 0, 1, 0},
-		{3600, 1, 0, 0},
-		{3661, 1, 1, 1},
-		{3600*24 + 60, 0, 1, 0},
-	}
-
-	for _, c := range cases {
-		h, m, s := ParseOfftime(c.offtime)
-		assert.Equal(t, c.hour, h)
-		assert.Equal(t, c.minite, m)
-		assert.Equal(t, c.second, s)
-	}
-}
-
 func TestTrimLower(t *testing.T) {
 	type args struct {
 		str string
@@ -378,6 +336,103 @@ func TestTrimLower(t *testing.T) {
 			if got := TrimLower(tt.args.str); got != tt.want {
 				t.Errorf("TrimLower() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestGetStrValueOfAnyType(t *testing.T) {
+	type args struct {
+		value interface{}
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"float", args{float32(1048576.1)}, "1048576.1"},
+		{"float", args{float64(1048576.12)}, "1048576.12"},
+		{"float", args{1048576.000}, "1048576"},
+		{"int", args{1048576}, "1048576"},
+		{"int", args{9223372036854775807}, "9223372036854775807"},
+		{"string", args{"hello world"}, "hello world"},
+		{"bool", args{true}, "true"},
+		{"bool", args{false}, "false"},
+		{"map", args{map[string]interface{}{"key1": "value1"}}, "{\"key1\":\"value1\"}"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GetStrValueOfAnyType(tt.args.value); got != tt.want {
+				t.Errorf("GetStrValueOfAnyType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNextSchedule(t *testing.T) {
+	curTime := time.Date(2009, time.November, 10, 20, 0, 0, 0, time.UTC)
+	expectTime1 := time.Date(2009, time.November, 11, 0, 0, 0, 0, time.UTC)
+	expectTime2 := time.Date(2009, time.November, 10, 21, 0, 0, 0, time.UTC)
+	expectTime4 := time.Date(2009, time.November, 10, 20, 8, 0, 0, time.UTC)
+
+	type args struct {
+		cron    string
+		curTime time.Time
+	}
+	tests := []struct {
+		name string
+		args args
+		want time.Time
+	}{
+		{"daily_in_six", args{"0 0 0 * * *", curTime}, expectTime1},
+		{"hourly_in_six", args{"0 0 * * * *", curTime}, expectTime2},
+		{"custom", args{"0 8 20 * * *", curTime}, expectTime4},
+		{"zero time", args{"", curTime}, time.Time{}},
+		{"invalid cron", args{"2", curTime}, time.Time{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, NextSchedule(tt.args.cron, tt.args.curTime), "NextSchedule(%v, %v)", tt.args.cron, tt.args.curTime)
+		})
+	}
+}
+
+type UserGroupSearchItem struct {
+	GroupName string
+}
+
+func Test_sortMostMatch(t *testing.T) {
+	type args struct {
+		input     []*UserGroupSearchItem
+		matchWord string
+		expected  []*UserGroupSearchItem
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"normal", args{[]*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "harbor_user"}, {GroupName: "admin_user"}, {GroupName: "users"},
+		}, "user", []*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "users"}, {GroupName: "admin_user"}, {GroupName: "harbor_user"},
+		}}},
+		{"duplicate_item", args{[]*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "user"}, {GroupName: "harbor_user"}, {GroupName: "admin_user"}, {GroupName: "users"},
+		}, "user", []*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "user"}, {GroupName: "users"}, {GroupName: "admin_user"}, {GroupName: "harbor_user"},
+		}}},
+		{"miss_exact_match", args{[]*UserGroupSearchItem{
+			{GroupName: "harbor_user"}, {GroupName: "admin_user"}, {GroupName: "users"},
+		}, "user", []*UserGroupSearchItem{
+			{GroupName: "users"}, {GroupName: "admin_user"}, {GroupName: "harbor_user"},
+		}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			sort.Slice(tt.args.input, func(i, j int) bool {
+				return MostMatchSorter(tt.args.input[i].GroupName, tt.args.input[j].GroupName, tt.args.matchWord)
+			})
+			assert.True(t, reflect.DeepEqual(tt.args.input, tt.args.expected))
 		})
 	}
 }

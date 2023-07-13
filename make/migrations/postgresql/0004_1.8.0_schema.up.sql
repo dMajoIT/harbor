@@ -59,7 +59,7 @@ ALTER TABLE registry ALTER COLUMN url TYPE varchar(256);
 ALTER TABLE registry ADD COLUMN credential_type varchar(16);
 ALTER TABLE registry RENAME COLUMN username TO access_key;
 ALTER TABLE registry RENAME COLUMN password TO access_secret;
-ALTER TABLE registry ALTER COLUMN access_secret TYPE varchar(1024);
+ALTER TABLE registry ALTER COLUMN access_secret TYPE varchar(4096);
 ALTER TABLE registry ADD COLUMN type varchar(32);
 ALTER TABLE registry DROP COLUMN target_type;
 ALTER TABLE registry ADD COLUMN description text;
@@ -70,14 +70,16 @@ UPDATE registry SET credential_type='basic';
 /*upgrade the replication_policy*/
 ALTER TABLE replication_policy ADD COLUMN creator varchar(256);
 ALTER TABLE replication_policy ADD COLUMN src_registry_id int;
-/*The predefined filters will be cleared and replaced by "project_name/"+double star.
+/*A name filter "project_name/"+double star will be merged into the filters.
 if harbor is integrated with the external project service, we cannot get the project name by ID,
 which means the repilcation policy will match all resources.*/
-UPDATE replication_policy r SET filters=(SELECT CONCAT('[{"type":"name","value":"', p.name,'/**"}]') FROM project p WHERE p.project_id=r.project_id);
+UPDATE replication_policy SET filters='[]' WHERE filters='';
+UPDATE replication_policy r SET filters=( r.filters::jsonb || (SELECT CONCAT('{"type":"name","value":"', p.name,'/**"}') FROM project p WHERE p.project_id=r.project_id)::jsonb);
 ALTER TABLE replication_policy RENAME COLUMN target_id TO dest_registry_id;
 ALTER TABLE replication_policy ALTER COLUMN dest_registry_id DROP NOT NULL;
 ALTER TABLE replication_policy ADD COLUMN dest_namespace varchar(256);
 ALTER TABLE replication_policy ADD COLUMN override boolean;
+UPDATE replication_policy SET override=TRUE;
 ALTER TABLE replication_policy DROP COLUMN project_id;
 ALTER TABLE replication_policy RENAME COLUMN cron_str TO trigger;
 
@@ -155,3 +157,27 @@ DROP INDEX poid_uptime;
 DROP INDEX poid_status;
 DROP TRIGGER replication_job_update_time_at_modtime ON replication_job;
 ALTER TABLE replication_job RENAME TO replication_schedule_job;
+
+/*
+migrate scan all schedule
+
+If user set the scan all schedule, move it into table admin_job, and let the api the parse the json data.
+*/
+DO $$
+BEGIN
+    IF exists(select * FROM properties WHERE k = 'scan_all_policy') then
+        /*
+            In v1.7.0, it creates an record for scan all but without cron string, just update the record with the cron in properties.
+         */
+        IF exists(select * FROM admin_job WHERE job_name = 'IMAGE_SCAN_ALL' AND job_kind = 'Periodic' AND deleted = 'f') then
+            UPDATE admin_job SET cron_str=scan_all_cron.v
+            FROM (select * FROM properties WHERE k = 'scan_all_policy') AS scan_all_cron
+            WHERE job_name = 'IMAGE_SCAN_ALL' AND job_kind = 'Periodic' AND deleted = 'f';
+        ELSE
+            INSERT INTO admin_job (job_name, job_kind, cron_str, status) VALUES ('IMAGE_SCAN_ALL', 'Periodic', (select v FROM properties WHERE k = 'scan_all_policy'), 'pending');
+        END IF;
+        DELETE FROM properties WHERE k='scan_all_policy';
+    END IF;
+END $$;
+
+

@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package logger
 
 import (
@@ -22,7 +36,7 @@ var singletons sync.Map
 // GetLogger gets an unified logger entry for logging per the passed settings.
 // The logger may built based on the multiple registered logger backends.
 //
-//  loggerOptions ...Option : logger options
+//	loggerOptions ...Option : logger options
 //
 // If failed, a nil logger and a non-nil error will be returned.
 // Otherwise, a non nil logger is returned with nil error.
@@ -45,11 +59,11 @@ func GetLogger(loggerOptions ...Option) (Interface, error) {
 	// Create backends
 	loggers := make([]Interface, 0)
 	for name, ops := range lOptions.values {
-		if !IsKnownLogger(name) {
+		d, o := IsKnownLogger(name)
+		if !o {
 			return nil, fmt.Errorf("no logger registered for name '%s'", name)
 		}
 
-		d := KnownLoggers(name)
 		var (
 			l  Interface
 			ok bool
@@ -111,7 +125,7 @@ func GetSweeper(context context.Context, sweeperOptions ...Option) (sweeper.Inte
 			return nil, fmt.Errorf("no sweeper provided for the logger %s", name)
 		}
 
-		d := KnownLoggers(name)
+		d, _ := IsKnownLogger(name)
 		s, err := d.Sweeper(ops...)
 		if err != nil {
 			return nil, err
@@ -125,11 +139,13 @@ func GetSweeper(context context.Context, sweeperOptions ...Option) (sweeper.Inte
 
 // GetLogDataGetter return the 1st matched log data getter interface
 //
-//  loggerOptions ...Option : logger options
+//	loggerOptions ...Option : logger options
 //
 // If failed,
-//   configured but initialize failed: a nil log data getter and a non-nil error will be returned.
-//   no getter configured: a nil log data getter with a nil error are returned
+//
+//	configured but initialize failed: a nil log data getter and a non-nil error will be returned.
+//	no getter configured: a nil log data getter with a nil error are returned
+//
 // Otherwise, a non nil log data getter is returned with nil error.
 func GetLogDataGetter(loggerOptions ...Option) (getter.Interface, error) {
 	if len(loggerOptions) == 0 {
@@ -199,7 +215,10 @@ func Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	// Avoid data race issue
+	// Do not cache this system std logger with name `NameStdOutput` as caching causes conflict with job std logger.
+	singletons.Delete(NameStdOutput)
 	singletons.Store(systemKeyServiceLogger, lg)
 
 	jOptions := make([]Option, 0)

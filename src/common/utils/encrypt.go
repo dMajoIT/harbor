@@ -19,24 +19,36 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"strings"
 
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// Encrypt encrypts the content with salt
-func Encrypt(content string, salt string) string {
-	return fmt.Sprintf("%x", pbkdf2.Key([]byte(content), []byte(salt), 4096, 16, sha1.New))
-}
-
 const (
 	// EncryptHeaderV1 ...
 	EncryptHeaderV1 = "<enc-v1>"
+	// SHA1 is the name of sha1 hash alg
+	SHA1 = "sha1"
+	// SHA256 is the name of sha256 hash alg
+	SHA256 = "sha256"
 )
+
+// HashAlg used to get correct alg for hash
+var HashAlg = map[string]func() hash.Hash{
+	SHA1:   sha1.New,
+	SHA256: sha256.New,
+}
+
+// Encrypt encrypts the content with salt
+func Encrypt(content string, salt string, encrptAlg string) string {
+	return fmt.Sprintf("%x", pbkdf2.Key([]byte(content), []byte(salt), 4096, 16, HashAlg[encrptAlg]))
+}
 
 // ReversibleEncrypt encrypts the str with aes/base64
 func ReversibleEncrypt(str, key string) (string, error) {
@@ -47,7 +59,14 @@ func ReversibleEncrypt(str, key string) (string, error) {
 	if block, err = aes.NewCipher(keyBytes); err != nil {
 		return "", err
 	}
-	cipherText := make([]byte, aes.BlockSize+len(str))
+
+	// ensures the value is no larger than 64 MB, which fits comfortably within an int and avoids the overflow
+	if len(str) > 64*1024*1024 {
+		return "", errors.New("str value too large")
+	}
+
+	size := aes.BlockSize + len(str)
+	cipherText := make([]byte, size)
 	iv := cipherText[:aes.BlockSize]
 	if _, err = io.ReadFull(rand.Reader, iv); err != nil {
 		return "", err

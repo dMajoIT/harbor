@@ -1,47 +1,47 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//	  http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package api
 
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/goharbor/harbor/src/chartserver"
-	"github.com/goharbor/harbor/src/common"
-
-	"github.com/astaxie/beego"
 	"github.com/dghubble/sling"
-	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/dao/project"
-	common_http "github.com/goharbor/harbor/src/common/http"
-	"github.com/goharbor/harbor/src/common/models"
-	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/goharbor/harbor/src/common"
+	"github.com/goharbor/harbor/src/common/dao"
+	common_http "github.com/goharbor/harbor/src/common/http"
+	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/pkg/member"
+	memberModels "github.com/goharbor/harbor/src/pkg/member/models"
+	"github.com/goharbor/harbor/src/pkg/user"
 )
 
 var (
-	nonSysAdminID, projAdminID, projDeveloperID, projGuestID, projAdminRobotID int64
-	projAdminPMID, projDeveloperPMID, projGuestPMID, projAdminRobotPMID        int
+	nonSysAdminID, projAdminID, projDeveloperID, projGuestID, projLimitedGuestID, projAdminRobotID int64
+	projAdminPMID, projDeveloperPMID, projGuestPMID, projLimitedGuestPMID, projAdminRobotPMID      int
 	// The following users/credentials are registered and assigned roles at the beginning of
 	// running testing and cleaned up at the end.
 	// Do not try to change the system and project roles that the users have during
@@ -65,10 +65,6 @@ var (
 	}
 	projGuest = &usrInfo{
 		Name:   "proj_guest",
-		Passwd: "Harbor12345",
-	}
-	projAdmin4Robot = &usrInfo{
-		Name:   "proj_admin_robot",
 		Passwd: "Harbor12345",
 	}
 )
@@ -139,7 +135,7 @@ func handle(r *testingRequest) (*httptest.ResponseRecorder, error) {
 	}
 
 	resp := httptest.NewRecorder()
-	beego.BeeApp.Handlers.ServeHTTP(resp, req)
+	handler.ServeHTTP(resp, req)
 	return resp, nil
 }
 
@@ -149,7 +145,7 @@ func handleAndParse(r *testingRequest, v interface{}) error {
 		return err
 	}
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -174,12 +170,13 @@ func runCodeCheckingCases(t *testing.T, cases ...*codeCheckingCase) {
 			if resp.Body.Len() > 0 {
 				t.Log(resp.Body.String())
 			}
-			continue
+			t.FailNow()
 		}
 
 		if c.postFunc != nil {
 			if err := c.postFunc(resp); err != nil {
 				t.Logf("error in running post function: %v", err)
+				t.Error(err)
 			}
 		}
 	}
@@ -207,6 +204,17 @@ func TestMain(m *testing.M) {
 	if err := prepare(); err != nil {
 		panic(err)
 	}
+	dao.ExecuteBatchSQL([]string{
+		"insert into user_group (group_name, group_type, ldap_group_dn) values ('test_group_01_api', 1, 'cn=harbor_users,ou=sample,ou=vmware,dc=harbor,dc=com')",
+		"insert into user_group (group_name, group_type, ldap_group_dn) values ('vsphere.local\\administrators', 2, '')",
+	})
+
+	defer dao.ExecuteBatchSQL([]string{
+		"delete from harbor_label",
+		"delete from robot",
+		"delete from user_group",
+		"delete from project_member where id > 1",
+	})
 
 	ret := m.Run()
 	clean()
@@ -214,9 +222,10 @@ func TestMain(m *testing.M) {
 }
 
 func prepare() error {
+	ctx := orm.Context()
 	// register nonSysAdmin
 	var err error
-	nonSysAdminID, err = dao.Register(models.User{
+	nsID, err := user.Mgr.Create(ctx, &models.User{
 		Username: nonSysAdmin.Name,
 		Password: nonSysAdmin.Passwd,
 		Email:    nonSysAdmin.Name + "@test.com",
@@ -224,9 +233,11 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
+	nonSysAdminID = int64(nsID)
 
 	// register projAdmin and assign project admin role
-	projAdminID, err = dao.Register(models.User{
+
+	paID, err := user.Mgr.Create(ctx, &models.User{
 		Username: projAdmin.Name,
 		Password: projAdmin.Passwd,
 		Email:    projAdmin.Name + "@test.com",
@@ -234,37 +245,18 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
-
-	if projAdminPMID, err = project.AddProjectMember(models.Member{
+	projAdminID = int64(paID)
+	if projAdminPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
-		Role:       models.PROJECTADMIN,
+		Role:       common.RoleProjectAdmin,
 		EntityID:   int(projAdminID),
 		EntityType: common.UserMember,
 	}); err != nil {
 		return err
 	}
 
-	// register projAdminRobots and assign project admin role
-	projAdminRobotID, err = dao.Register(models.User{
-		Username: projAdmin4Robot.Name,
-		Password: projAdmin4Robot.Passwd,
-		Email:    projAdmin4Robot.Name + "@test.com",
-	})
-	if err != nil {
-		return err
-	}
-
-	if projAdminRobotPMID, err = project.AddProjectMember(models.Member{
-		ProjectID:  1,
-		Role:       models.PROJECTADMIN,
-		EntityID:   int(projAdminRobotID),
-		EntityType: common.UserMember,
-	}); err != nil {
-		return err
-	}
-
 	// register projDeveloper and assign project developer role
-	projDeveloperID, err = dao.Register(models.User{
+	pdID, err := user.Mgr.Create(ctx, &models.User{
 		Username: projDeveloper.Name,
 		Password: projDeveloper.Passwd,
 		Email:    projDeveloper.Name + "@test.com",
@@ -272,10 +264,11 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
+	projDeveloperID = int64(pdID)
 
-	if projDeveloperPMID, err = project.AddProjectMember(models.Member{
+	if projDeveloperPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
-		Role:       models.DEVELOPER,
+		Role:       common.RoleDeveloper,
 		EntityID:   int(projDeveloperID),
 		EntityType: common.UserMember,
 	}); err != nil {
@@ -283,7 +276,7 @@ func prepare() error {
 	}
 
 	// register projGuest and assign project guest role
-	projGuestID, err = dao.Register(models.User{
+	pgID, err := user.Mgr.Create(ctx, &models.User{
 		Username: projGuest.Name,
 		Password: projGuest.Passwd,
 		Email:    projGuest.Name + "@test.com",
@@ -291,10 +284,11 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
+	projGuestID = int64(pgID)
 
-	if projGuestPMID, err = project.AddProjectMember(models.Member{
+	if projGuestPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
-		Role:       models.GUEST,
+		Role:       common.RoleGuest,
 		EntityID:   int(projGuestID),
 		EntityType: common.UserMember,
 	}); err != nil {
@@ -304,39 +298,18 @@ func prepare() error {
 }
 
 func clean() {
+	ctx := orm.Context()
 	pmids := []int{projAdminPMID, projDeveloperPMID, projGuestPMID}
 
 	for _, id := range pmids {
-		if err := project.DeleteProjectMemberByID(id); err != nil {
+		if err := member.Mgr.Delete(ctx, 1, id); err != nil {
 			fmt.Printf("failed to clean up member %d from project library: %v", id, err)
 		}
 	}
 	userids := []int64{nonSysAdminID, projAdminID, projDeveloperID, projGuestID}
 	for _, id := range userids {
-		if err := dao.DeleteUser(int(id)); err != nil {
+		if err := user.Mgr.Delete(ctx, int(id)); err != nil {
 			fmt.Printf("failed to clean up user %d: %v \n", id, err)
 		}
 	}
-}
-
-// Provides a mock chart controller for deletable test cases
-func mockChartController() (*httptest.Server, *chartserver.Controller, error) {
-	mockServer := httptest.NewServer(htesting.MockChartRepoHandler)
-
-	var oldController, newController *chartserver.Controller
-	url, err := url.Parse(mockServer.URL)
-	if err == nil {
-		newController, err = chartserver.NewController(url)
-	}
-
-	if err != nil {
-		mockServer.Close()
-		return nil, nil, err
-	}
-
-	// Override current controller and keep the old one for restoring
-	oldController = chartController
-	chartController = newController
-
-	return mockServer, oldController, nil
 }

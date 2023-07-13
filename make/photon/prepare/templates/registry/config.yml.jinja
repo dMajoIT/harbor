@@ -1,6 +1,6 @@
 version: 0.1
 log:
-  level: {{log_level}}
+  level: {{level}}
   fields:
     service: registry
 storage:
@@ -9,34 +9,67 @@ storage:
   {{storage_provider_info}}
   maintenance:
     uploadpurging:
+{% if purge_upload.enabled %}
+      enabled: true
+      age: {{ purge_upload.age }}
+      interval: {{ purge_upload.interval }}
+      {% if purge_upload.dryrun %}
+      dryrun: true
+      {% else %}
+      dryrun: false
+      {% endif %}
+{% else %}
       enabled: false
+{% endif %}
   delete:
     enabled: true
+{% if storage_redirect_disabled %}
+  redirect:
+    disable: true
+{% endif %}
 redis:
-  addr: {{redis_host}}:{{redis_port}}
+{% if sentinel_master_set %}
+  # sentinel hosts with comma
+  addr: {{redis_host}}
+  sentinelMasterSet: {{sentinel_master_set}}
+{% else %}
+  addr: {{redis_host}}
+{% endif %}
+  readtimeout: 10s
+  writetimeout: 10s
+  dialtimeout: 10s
   password: {{redis_password}}
   db: {{redis_db_index_reg}}
+  pool:
+    maxidle: 100
+    maxactive: 500
+    idletimeout: 60s
 http:
+{% if internal_tls.enabled %}
+  addr: :5443
+  tls:
+    certificate: /etc/harbor/tls/registry.crt
+    key: /etc/harbor/tls/registry.key
+    minimumtls: tls1.2
+{% else %}
   addr: :5000
+{% endif %}
   secret: placeholder
   debug:
+{% if metric.enabled %}
+    addr: :{{ metric.port }}
+    prometheus:
+      enabled: true
+      path: {{ metric.path }}
+{% else %}
     addr: localhost:5001
+{% endif %}
 auth:
-  token:
-    issuer: harbor-token-issuer
-    realm: {{public_url}}/service/token
-    rootcertbundle: /etc/registry/root.crt
-    service: harbor-registry
+  htpasswd:
+    realm: harbor-registry-basic-realm
+    path: /etc/registry/passwd
 validation:
   disabled: true
-notifications:
-  endpoints:
-  - name: harbor
-    disabled: false
-    url: {{core_url}}/service/notifications
-    timeout: 3000ms
-    threshold: 5
-    backoff: 1s
 compatibility:
   schema1:
     enabled: true

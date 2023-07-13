@@ -14,11 +14,14 @@
 package auth
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/pkg/usergroup/model"
 )
 
 var l = NewUserLock(2 * time.Second)
@@ -44,7 +47,7 @@ func TestLock(t *testing.T) {
 func TestDefaultAuthenticate(t *testing.T) {
 	authHelper := DefaultAuthenticateHelper{}
 	m := models.AuthModel{}
-	user, err := authHelper.Authenticate(m)
+	user, err := authHelper.Authenticate(context.TODO(), m)
 	if user != nil || err == nil {
 		t.Fatal("Default implementation should return nil")
 	}
@@ -53,7 +56,7 @@ func TestDefaultAuthenticate(t *testing.T) {
 func TestDefaultOnBoardUser(t *testing.T) {
 	user := &models.User{}
 	authHelper := DefaultAuthenticateHelper{}
-	err := authHelper.OnBoardUser(user)
+	err := authHelper.OnBoardUser(context.TODO(), user)
 	if err == nil {
 		t.Fatal("Default implementation should return error")
 	}
@@ -61,17 +64,17 @@ func TestDefaultOnBoardUser(t *testing.T) {
 
 func TestDefaultMethods(t *testing.T) {
 	authHelper := DefaultAuthenticateHelper{}
-	_, err := authHelper.SearchUser("sample")
+	_, err := authHelper.SearchUser(context.TODO(), "sample")
 	if err == nil {
 		t.Fatal("Default implementation should return error")
 	}
 
-	_, err = authHelper.SearchGroup("sample")
+	_, err = authHelper.SearchGroup(context.TODO(), "sample")
 	if err == nil {
 		t.Fatal("Default implementation should return error")
 	}
 
-	err = authHelper.OnBoardGroup(&models.UserGroup{}, "sample")
+	err = authHelper.OnBoardGroup(context.TODO(), &model.UserGroup{}, "sample")
 	if err == nil {
 		t.Fatal("Default implementation should return error")
 	}

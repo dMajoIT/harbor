@@ -17,11 +17,14 @@ package http
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
-	"io/ioutil"
 	"net/http"
+	"net/url"
+	"reflect"
 
 	"github.com/goharbor/harbor/src/common/http/modifier"
+	"github.com/goharbor/harbor/src/lib"
 )
 
 // Client is a util for common HTTP operations, such Get, Head, Post, Put and Delete.
@@ -29,6 +32,11 @@ import (
 type Client struct {
 	modifiers []modifier.Modifier
 	client    *http.Client
+}
+
+// GetClient returns the http.Client
+func (c *Client) GetClient() *http.Client {
+	return c.client
 }
 
 // NewClient creates an instance of Client.
@@ -40,9 +48,7 @@ func NewClient(c *http.Client, modifiers ...modifier.Modifier) *Client {
 	}
 	if client.client == nil {
 		client.client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
+			Transport: GetHTTPTransport(),
 		}
 	}
 	if len(modifiers) > 0 {
@@ -120,7 +126,6 @@ func (c *Client) Post(url string, v ...interface{}) error {
 func (c *Client) Put(url string, v ...interface{}) error {
 	var reader io.Reader
 	if len(v) > 0 {
-		data := []byte{}
 		data, err := json.Marshal(v[0])
 		if err != nil {
 			return err
@@ -154,7 +159,7 @@ func (c *Client) do(req *http.Request) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -167,4 +172,70 @@ func (c *Client) do(req *http.Request) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// GetAndIteratePagination iterates the pagination header and returns all resources
+// The parameter "v" must be a pointer to a slice
+func (c *Client) GetAndIteratePagination(endpoint string, v interface{}) error {
+	url, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Ptr {
+		return errors.New("v should be a pointer to a slice")
+	}
+	elemType := rv.Elem().Type()
+	if elemType.Kind() != reflect.Slice {
+		return errors.New("v should be a pointer to a slice")
+	}
+
+	resources := reflect.Indirect(reflect.New(elemType))
+	for len(endpoint) > 0 {
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			return err
+		}
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return &Error{
+				Code:    resp.StatusCode,
+				Message: string(data),
+			}
+		}
+
+		res := reflect.New(elemType)
+		if err = json.Unmarshal(data, res.Interface()); err != nil {
+			return err
+		}
+		resources = reflect.AppendSlice(resources, reflect.Indirect(res))
+
+		endpoint = ""
+		links := lib.ParseLinks(resp.Header.Get("Link"))
+		for _, link := range links {
+			if link.Rel == "next" {
+				endpoint = url.Scheme + "://" + url.Host + link.URL
+				url, err = url.Parse(endpoint)
+				if err != nil {
+					return err
+				}
+				// encode the query parameters to avoid bad request
+				// e.g. ?q=name={p1 p2 p3} need to be encoded to ?q=name%3D%7Bp1+p2+p3%7D
+				url.RawQuery = url.Query().Encode()
+				endpoint = url.String()
+				break
+			}
+		}
+	}
+	rv.Elem().Set(resources)
+	return nil
 }

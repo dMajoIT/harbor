@@ -18,15 +18,18 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/goharbor/harbor/src/common/utils/log"
-	"github.com/goharbor/harbor/src/registryctl/auth"
 	gorilla_handlers "github.com/gorilla/handlers"
+
+	"github.com/goharbor/harbor/src/lib/log"
+	tracelib "github.com/goharbor/harbor/src/lib/trace"
+	"github.com/goharbor/harbor/src/registryctl/auth"
+	"github.com/goharbor/harbor/src/registryctl/config"
 )
 
 // NewHandlerChain returns a gorilla router which is wrapped by  authenticate handler
 // and logging handler
-func NewHandlerChain() http.Handler {
-	h := newRouter()
+func NewHandlerChain(conf config.Configuration) http.Handler {
+	h := newRouter(conf)
 	secrets := map[string]string{
 		"jobSecret": os.Getenv("JOBSERVICE_SECRET"),
 	}
@@ -35,6 +38,9 @@ func NewHandlerChain() http.Handler {
 	}
 	h = newAuthHandler(auth.NewSecretHandler(secrets), h, insecureAPIs)
 	h = gorilla_handlers.LoggingHandler(os.Stdout, h)
+	if tracelib.Enabled() {
+		h = tracelib.NewHandler(h, "serve-http")
+	}
 	return h
 }
 
@@ -78,5 +84,4 @@ func (a *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if a.handler != nil {
 		a.handler.ServeHTTP(w, r)
 	}
-	return
 }

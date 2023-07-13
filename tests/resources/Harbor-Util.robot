@@ -14,13 +14,10 @@
 
 *** Settings ***
 Documentation  This resource provides any keywords related to the Harbor private registry appliance
-Library  Selenium2Library
+Library  SeleniumLibrary
 Library  OperatingSystem
 
 *** Variables ***
-${HARBOR_VERSION}  v1.1.1
-${CLAIR_BUILDER}  1.6.0
-${GOLANG_VERSION}  1.9.2
 
 *** Keywords ***
 Install Harbor to Test Server
@@ -29,7 +26,7 @@ Install Harbor to Test Server
     Sleep  5s
     ${rc}  ${output}=  Run And Return Rc And Output  docker ps
     Should Be Equal As Integers  ${rc}  0
-    Log To Console  \n${output}
+    Log To Console  ${output}
     Log To Console  \nconfig harbor cfg
     Config Harbor cfg  http_proxy=https
     Prepare Cert
@@ -37,39 +34,39 @@ Install Harbor to Test Server
     Compile and Up Harbor With Source Code
     ${rc}  ${output}=  Run And Return Rc And Output  docker ps
     Should Be Equal As Integers  ${rc}  0
-    Log To Console  \n${output}
+    Log To Console  ${output}
     Generate Certificate Authority For Chrome
 
 Up Harbor
-    [Arguments]  ${with_notary}=true  ${with_clair}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  make start -e NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} CHARTFLAG=${with_chartmuseum}
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  make start
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
 
 Down Harbor
-    [Arguments]  ${with_notary}=true  ${with_clair}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  echo "Y" | make down -e NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} CHARTFLAG=${with_chartmuseum}
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  echo "Y" | make down
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
 
 Package Harbor Offline
-    [Arguments]  ${golang_image}=golang:${GOLANG_VERSION}  ${with_notary}=true  ${with_clair}=true  ${with_migrator}=false  ${with_chartmuseum}=true
+    [Arguments]  ${with_trivy}=true
     Log To Console  \nStart Docker Daemon
     Start Docker Daemon Locally
-    Log To Console  \n\nmake package_offline VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} UIVERSIONTAG=%{Harbor_UI_Version} GOBUILDIMAGE=${golang_image} COMPILETAG=compile_golangimage NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} MIGRATORFLAG=${with_migrator} CHARTFLAG=${with_chartmuseum} HTTPPROXY=
-    ${rc}  ${output}=  Run And Return Rc And Output  make package_offline VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} UIVERSIONTAG=%{Harbor_UI_Version} GOBUILDIMAGE=${golang_image} COMPILETAG=compile_golangimage NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} MIGRATORFLAG=${with_migrator} CHARTFLAG=${with_chartmuseum} HTTPPROXY=
-    Log  ${rc}
-    Log  ${output}
+    Log To Console  make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=%{Harbor_Build_Base_Tag} NPM_REGISTRY=%{NPM_REGISTRY} VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    ${rc}  ${output}=  Run And Return Rc And Output  make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=%{Harbor_Build_Base_Tag} NPM_REGISTRY=%{NPM_REGISTRY} VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    Log To Console  ${rc}
+    Log To Console  ${output}
     Should Be Equal As Integers  ${rc}  0
 
 Package Harbor Online
-    [Arguments]  ${golang_image}=golang:${GOLANG_VERSION}  ${with_notary}=true  ${with_clair}=true  ${with_migrator}=false  ${with_chartmuseum}=true
+    [Arguments]  ${with_trivy}=true
     Log To Console  \nStart Docker Daemon
     Start Docker Daemon Locally
-    Log To Console  \nmake package_online VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} UIVERSIONTAG=%{Harbor_UI_Version} GOBUILDIMAGE=${golang_image} COMPILETAG=compile_golangimage NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} MIGRATORFLAG=${with_migrator} CHARTFLAG=${with_chartmuseum} HTTPPROXY=
-    ${rc}  ${output}=  Run And Return Rc And Output  make package_online VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} UIVERSIONTAG=%{Harbor_UI_Version} GOBUILDIMAGE=${golang_image} COMPILETAG=compile_golangimage NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} MIGRATORFLAG=${with_migrator} CHARTFLAG=${with_chartmuseum} HTTPPROXY=
+    Log To Console  \nmake package_online GOBUILDTAGS="include_oss include_gcs"  VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    ${rc}  ${output}=  Run And Return Rc And Output  make package_online GOBUILDTAGS="include_oss include_gcs" VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
@@ -83,9 +80,7 @@ Switch To LDAP
     Config Harbor cfg  auth=ldap_auth  http_proxy=https
     Prepare
     Up Harbor
-    ${rc}=  Run And Return Rc  docker pull osixia/openldap:1.1.7
-    Log  ${rc}
-    Should Be Equal As Integers  ${rc}  0
+    Docker Pull  osixia/openldap:1.1.7
     ${rc}  ${output}=  Run And Return Rc And Output  cd tests && ./ldapprepare.sh
     Log  ${rc}
     Log  ${output}
@@ -95,31 +90,22 @@ Switch To LDAP
     Should Be Equal As Integers  ${rc}  0
     Generate Certificate Authority For Chrome
 
-Enable Notary Client
+Get Harbor CA
+    [Arguments]  ${ip}  ${cert}
+    Log All  Start to get harbor ca: ${ip} ${cert}
+    #In API E2E engine, store cert in path "/ca"
+    Run Keyword If  '${http_get_ca}' == 'false'  Run Keywords
+    ...  Wait Unitl Command Success  cp /ca/harbor_ca.crt ${cert}
+    ...  AND  Return From Keyword
     ${rc}  ${output}=  Run And Return Rc And Output  rm -rf ~/.docker/
-    Log  ${rc}
+    Log All  ${rc}
+    ${rc}  ${output}=  Run And Return Rc and Output  curl -o ${cert} -s -k -X GET -u 'admin:Harbor12345' 'https://${ip}/api/v2.0/systeminfo/getcert'
+    Log All  ${output}
     Should Be Equal As Integers  ${rc}  0
-    Log  ${ip}
-    Log To Console  ${ip}
-    ${rc}=  Run And Return Rc  mkdir -p /etc/docker/certs.d/${ip}/
-    Should Be Equal As Integers  ${rc}  0
-    Log To Console  ${notaryServerEndpointNoSubDir}
-    ${rc}=  Run And Return Rc  mkdir -p ~/.docker/tls/${notaryServerEndpointNoSubDir}/
-    Should Be Equal As Integers  ${rc}  0
-    ${rc}  ${output}=  Run And Return Rc And Output  cp ./harbor_ca.crt /etc/docker/certs.d/${ip}/
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
-    ${rc}  ${output}=  Run And Return Rc And Output  cp ./harbor_ca.crt ~/.docker/tls/${notaryServerEndpointNoSubDir}/
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
-    ${rc}  ${output}=  Run And Return Rc And Output  ls -la /etc/docker/certs.d/${ip}/
-    Log  ${output}
-    ${rc}  ${output}=  Run And Return Rc And Output  ls -la ~/.docker/tls/${notaryServerEndpointNoSubDir}/
-    Log  ${output}
 
 Prepare
-    [Arguments]  ${with_notary}=true  ${with_clair}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  make prepare -e NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} CHARTFLAG=${with_chartmuseum}
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  make prepare
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
@@ -152,11 +138,8 @@ Prepare Cert
     Should Be Equal As Integers  ${rc}  0
 
 Compile and Up Harbor With Source Code
-    [Arguments]  ${golang_image}=golang:${GOLANG_VERSION}  ${with_notary}=true  ${with_clair}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  docker pull ${golang_image}
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
-    ${rc}  ${output}=  Run And Return Rc And Output  make install swagger_client GOBUILDIMAGE=${golang_image} COMPILETAG=compile_golangimage NOTARYFLAG=${with_notary} CLAIRFLAG=${with_clair} CHARTFLAG=${with_chartmuseum} HTTPPROXY=
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  make install swagger_client HTTPPROXY=
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
     Sleep  20
@@ -164,16 +147,17 @@ Compile and Up Harbor With Source Code
 Wait for Harbor Ready
     [Arguments]  ${protocol}  ${HARBOR_IP}
     Log To Console  Waiting for Harbor to Come Up...
-    :FOR  ${i}  IN RANGE  20
-    \  ${out}=  Run  curl -k ${protocol}://${HARBOR_IP}
-    \  Log  ${out}
-    \  ${status}=  Run Keyword And Return Status  Should Not Contain  ${out}  502 Bad Gateway
-    \  ${status}=  Run Keyword If  ${status}  Run Keyword And Return Status  Should Not Contain  ${out}  Connection refused
-    \  ${status}=  Run Keyword If  ${status}  Run Keyword And Return Status  Should Contain  ${out}  <title>Harbor</title>
-    \  Return From Keyword If  ${status}  ${HARBOR_IP}
-    \  Sleep  30s
+    FOR  ${i}  IN RANGE  20
+        ${out}=  Run  curl -k ${protocol}://${HARBOR_IP}
+        Log  ${out}
+        ${status}=  Run Keyword And Return Status  Should Not Contain  ${out}  502 Bad Gateway
+        ${status}=  Run Keyword If  ${status}  Run Keyword And Return Status  Should Not Contain  ${out}  Connection refused
+        ${status}=  Run Keyword If  ${status}  Run Keyword And Return Status  Should Contain  ${out}  <title>Harbor</title>
+        Return From Keyword If  ${status}  ${HARBOR_IP}
+        Sleep  30s
+    END
     Fail Harbor failed to come up properly!
 
 Get Harbor Version
-    ${rc}  ${output}=  Run And Return Rc And Output  curl -k -X GET --header 'Accept: application/json' 'https://${ip}/api/systeminfo'|grep -i harbor_version
+    ${rc}  ${output}=  Run And Return Rc And Output  curl -k -X GET --header 'Accept: application/json' 'https://${ip}/api/v2.0/systeminfo'|grep -i harbor_version
     Log To Console  ${output}

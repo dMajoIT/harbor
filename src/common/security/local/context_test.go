@@ -15,26 +15,37 @@
 package local
 
 import (
-	"os"
+	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/dao/project"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
-	"github.com/goharbor/harbor/src/common/utils/log"
-	"github.com/goharbor/harbor/src/common/utils/test"
-	"github.com/goharbor/harbor/src/core/promgr"
-	"github.com/goharbor/harbor/src/core/promgr/pmsdriver/local"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
+	"github.com/goharbor/harbor/src/testing/mock"
 )
 
 var (
-	private = &models.Project{
-		Name:    "private_project",
-		OwnerID: 1,
+	public = &proModels.Project{
+		ProjectID: 1,
+		Name:      "public_project",
+		OwnerID:   1,
+		Metadata: map[string]string{
+			"public": "true",
+		},
+	}
+
+	private = &proModels.Project{
+		ProjectID: 2,
+		Name:      "private_project",
+		OwnerID:   1,
+		Metadata: map[string]string{
+			"public": "false",
+		},
 	}
 
 	projectAdminUser = &models.User{
@@ -49,349 +60,216 @@ var (
 		Username: "guestUser",
 		Email:    "guestUser@vmware.com",
 	}
-
-	pm = promgr.NewDefaultProjectManager(local.NewDriver(), true)
 )
-
-func TestMain(m *testing.M) {
-
-	test.InitDatabaseFromEnv()
-
-	// regiser users
-	id, err := dao.Register(*projectAdminUser)
-	if err != nil {
-		log.Fatalf("failed to register user: %v", err)
-	}
-	projectAdminUser.UserID = int(id)
-	defer dao.DeleteUser(int(id))
-
-	id, err = dao.Register(*developerUser)
-	if err != nil {
-		log.Fatalf("failed to register user: %v", err)
-	}
-	developerUser.UserID = int(id)
-	defer dao.DeleteUser(int(id))
-
-	id, err = dao.Register(*guestUser)
-	if err != nil {
-		log.Fatalf("failed to register user: %v", err)
-	}
-	guestUser.UserID = int(id)
-	defer dao.DeleteUser(int(id))
-
-	// add project
-	id, err = dao.AddProject(*private)
-	if err != nil {
-		log.Fatalf("failed to add project: %v", err)
-	}
-	private.ProjectID = id
-	defer dao.DeleteProject(id)
-
-	var projectAdminPMID, developerUserPMID, guestUserPMID int
-	// add project members
-	projectAdminPMID, err = project.AddProjectMember(models.Member{
-		ProjectID:  private.ProjectID,
-		EntityID:   projectAdminUser.UserID,
-		EntityType: common.UserMember,
-		Role:       common.RoleProjectAdmin,
-	})
-	if err != nil {
-		log.Fatalf("failed to add member: %v", err)
-	}
-	defer project.DeleteProjectMemberByID(projectAdminPMID)
-
-	developerUserPMID, err = project.AddProjectMember(models.Member{
-		ProjectID:  private.ProjectID,
-		EntityID:   developerUser.UserID,
-		EntityType: common.UserMember,
-		Role:       common.RoleDeveloper,
-	})
-	if err != nil {
-		log.Fatalf("failed to add member: %v", err)
-	}
-	defer project.DeleteProjectMemberByID(developerUserPMID)
-	guestUserPMID, err = project.AddProjectMember(models.Member{
-		ProjectID:  private.ProjectID,
-		EntityID:   guestUser.UserID,
-		EntityType: common.UserMember,
-		Role:       common.RoleGuest,
-	})
-	if err != nil {
-		log.Fatalf("failed to add member: %v", err)
-	}
-	defer project.DeleteProjectMemberByID(guestUserPMID)
-	os.Exit(m.Run())
-}
 
 func TestIsAuthenticated(t *testing.T) {
 	// unauthenticated
-	ctx := NewSecurityContext(nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.False(t, ctx.IsAuthenticated())
 
 	// authenticated
 	ctx = NewSecurityContext(&models.User{
 		Username: "test",
-	}, nil)
+	})
 	assert.True(t, ctx.IsAuthenticated())
 }
 
 func TestGetUsername(t *testing.T) {
 	// unauthenticated
-	ctx := NewSecurityContext(nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.Equal(t, "", ctx.GetUsername())
 
 	// authenticated
 	ctx = NewSecurityContext(&models.User{
 		Username: "test",
-	}, nil)
+	})
 	assert.Equal(t, "test", ctx.GetUsername())
 }
 
 func TestIsSysAdmin(t *testing.T) {
 	// unauthenticated
-	ctx := NewSecurityContext(nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.False(t, ctx.IsSysAdmin())
 
 	// authenticated, non admin
 	ctx = NewSecurityContext(&models.User{
 		Username: "test",
-	}, nil)
+	})
 	assert.False(t, ctx.IsSysAdmin())
 
 	// authenticated, admin
 	ctx = NewSecurityContext(&models.User{
 		Username:     "test",
-		HasAdminRole: true,
-	}, nil)
+		SysAdminFlag: true,
+	})
 	assert.True(t, ctx.IsSysAdmin())
 }
 
 func TestIsSolutionUser(t *testing.T) {
-	ctx := NewSecurityContext(nil, nil)
+	ctx := NewSecurityContext(nil)
 	assert.False(t, ctx.IsSolutionUser())
 }
 
-func TestHasReadPerm(t *testing.T) {
-	// public project
-	ctx := NewSecurityContext(nil, pm)
+func TestHasPullPerm(t *testing.T) {
+	{
+		// public project
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(public, nil)
 
-	resource := rbac.NewProjectNamespace("library").Resource(rbac.ResourceRepository)
-	assert.True(t, ctx.Can(rbac.ActionPull, resource))
-
-	// private project, unauthenticated
-	ctx = NewSecurityContext(nil, pm)
-	resource = rbac.NewProjectNamespace(private.Name).Resource(rbac.ResourceRepository)
-	assert.False(t, ctx.Can(rbac.ActionPull, resource))
-
-	// private project, authenticated, has no perm
-	ctx = NewSecurityContext(&models.User{
-		Username: "test",
-	}, pm)
-	assert.False(t, ctx.Can(rbac.ActionPull, resource))
-
-	// private project, authenticated, has read perm
-	ctx = NewSecurityContext(guestUser, pm)
-	assert.True(t, ctx.Can(rbac.ActionPull, resource))
-
-	// private project, authenticated, system admin
-	ctx = NewSecurityContext(&models.User{
-		Username:     "admin",
-		HasAdminRole: true,
-	}, pm)
-	assert.True(t, ctx.Can(rbac.ActionPull, resource))
-}
-
-func TestHasWritePerm(t *testing.T) {
-	resource := rbac.NewProjectNamespace(private.Name).Resource(rbac.ResourceRepository)
-
-	// unauthenticated
-	ctx := NewSecurityContext(nil, pm)
-	assert.False(t, ctx.Can(rbac.ActionPush, resource))
-
-	// authenticated, has read perm
-	ctx = NewSecurityContext(guestUser, pm)
-	assert.False(t, ctx.Can(rbac.ActionPush, resource))
-
-	// authenticated, has write perm
-	ctx = NewSecurityContext(developerUser, pm)
-	assert.True(t, ctx.Can(rbac.ActionPush, resource))
-
-	// authenticated, system admin
-	ctx = NewSecurityContext(&models.User{
-		Username:     "admin",
-		HasAdminRole: true,
-	}, pm)
-	assert.True(t, ctx.Can(rbac.ActionPush, resource))
-}
-
-func TestHasAllPerm(t *testing.T) {
-	resource := rbac.NewProjectNamespace(private.Name).Resource(rbac.ResourceRepository)
-
-	// unauthenticated
-	ctx := NewSecurityContext(nil, pm)
-	assert.False(t, ctx.Can(rbac.ActionPushPull, resource))
-
-	// authenticated, has all perms
-	ctx = NewSecurityContext(projectAdminUser, pm)
-	assert.True(t, ctx.Can(rbac.ActionPushPull, resource))
-
-	// authenticated, system admin
-	ctx = NewSecurityContext(&models.User{
-		Username:     "admin",
-		HasAdminRole: true,
-	}, pm)
-	assert.True(t, ctx.Can(rbac.ActionPushPull, resource))
-}
-
-func TestHasAllPermWithGroup(t *testing.T) {
-	PrepareGroupTest()
-	project, err := dao.GetProjectByName("group_project")
-	if err != nil {
-		t.Errorf("Error occurred when GetProjectByName: %v", err)
-	}
-	developer, err := dao.GetUser(models.User{Username: "sample01"})
-	if err != nil {
-		t.Errorf("Error occurred when GetUser: %v", err)
-	}
-	developer.GroupList = []*models.UserGroup{
-		{GroupName: "test_group", GroupType: 1, LdapGroupDN: "cn=harbor_user,dc=example,dc=com"},
+		ctx := NewSecurityContext(nil)
+		ctx.ctl = ctl
+		resource := rbac_project.NewNamespace(1).Resource(rbac.ResourceRepository)
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPull, resource))
 	}
 
-	resource := rbac.NewProjectNamespace(project.Name).Resource(rbac.ResourceRepository)
+	{
+		// private project, unauthenticated
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
 
-	ctx := NewSecurityContext(developer, pm)
-	assert.False(t, ctx.Can(rbac.ActionPushPull, resource))
-	assert.True(t, ctx.Can(rbac.ActionPush, resource))
-	assert.True(t, ctx.Can(rbac.ActionPull, resource))
-}
-
-func TestGetMyProjects(t *testing.T) {
-	ctx := NewSecurityContext(guestUser, pm)
-	projects, err := ctx.GetMyProjects()
-	require.Nil(t, err)
-	assert.Equal(t, 1, len(projects))
-	assert.Equal(t, private.ProjectID, projects[0].ProjectID)
-}
-
-func TestGetProjectRoles(t *testing.T) {
-	// unauthenticated
-	ctx := NewSecurityContext(nil, pm)
-	roles := ctx.GetProjectRoles(private.Name)
-	assert.Equal(t, 0, len(roles))
-
-	// authenticated, project name of ID is nil
-	ctx = NewSecurityContext(guestUser, pm)
-	roles = ctx.GetProjectRoles(nil)
-	assert.Equal(t, 0, len(roles))
-
-	// authenticated, has read perm
-	ctx = NewSecurityContext(guestUser, pm)
-	roles = ctx.GetProjectRoles(private.Name)
-	assert.Equal(t, 1, len(roles))
-	assert.Equal(t, common.RoleGuest, roles[0])
-
-	// authenticated, has write perm
-	ctx = NewSecurityContext(developerUser, pm)
-	roles = ctx.GetProjectRoles(private.Name)
-	assert.Equal(t, 1, len(roles))
-	assert.Equal(t, common.RoleDeveloper, roles[0])
-
-	// authenticated, has all perms
-	ctx = NewSecurityContext(projectAdminUser, pm)
-	roles = ctx.GetProjectRoles(private.Name)
-	assert.Equal(t, 1, len(roles))
-	assert.Equal(t, common.RoleProjectAdmin, roles[0])
-}
-func PrepareGroupTest() {
-	initSqls := []string{
-		`insert into user_group (group_name, group_type, ldap_group_dn) values ('harbor_group_01', 1, 'cn=harbor_user,dc=example,dc=com')`,
-		`insert into harbor_user (username, email, password, realname) values ('sample01', 'sample01@example.com', 'harbor12345', 'sample01')`,
-		`insert into project (name, owner_id) values ('group_project', 1)`,
-		`insert into project (name, owner_id) values ('group_project_private', 1)`,
-		`insert into project_metadata (project_id, name, value) values ((select project_id from project where name = 'group_project'), 'public', 'false')`,
-		`insert into project_metadata (project_id, name, value) values ((select project_id from project where name = 'group_project_private'), 'public', 'false')`,
-		`insert into project_member (project_id, entity_id, entity_type, role) values ((select project_id from project where name = 'group_project'), (select id from user_group where group_name = 'harbor_group_01'),'g', 2)`,
+		ctx := NewSecurityContext(nil)
+		ctx.ctl = ctl
+		resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+		assert.False(t, ctx.Can(context.TODO(), rbac.ActionPull, resource))
 	}
 
-	clearSqls := []string{
-		`delete from project_metadata where project_id in (select project_id from project where name in ('group_project', 'group_project_private'))`,
-		`delete from project where name in ('group_project', 'group_project_private')`,
-		`delete from project_member where project_id in (select project_id from project where name in ('group_project', 'group_project_private'))`,
-		`delete from user_group where group_name = 'harbor_group_01'`,
-		`delete from harbor_user where username = 'sample01'`,
-	}
-	dao.PrepareTestData(clearSqls, initSqls)
-}
+	{
+		// private project, authenticated, has no perm
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+		mock.OnAnything(ctl, "ListRoles").Return([]int{}, nil)
 
-func TestSecurityContext_GetRolesByGroup(t *testing.T) {
-	PrepareGroupTest()
-	project, err := dao.GetProjectByName("group_project")
-	if err != nil {
-		t.Errorf("Error occurred when GetProjectByName: %v", err)
+		ctx := NewSecurityContext(&models.User{Username: "test"})
+		ctx.ctl = ctl
+		resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+		assert.False(t, ctx.Can(context.TODO(), rbac.ActionPull, resource))
 	}
-	developer, err := dao.GetUser(models.User{Username: "sample01"})
-	if err != nil {
-		t.Errorf("Error occurred when GetUser: %v", err)
+
+	{
+		// private project, authenticated, has read perm
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+		mock.OnAnything(ctl, "ListRoles").Return([]int{common.RoleGuest}, nil)
+
+		ctx := NewSecurityContext(guestUser)
+		ctx.ctl = ctl
+		resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPull, resource))
 	}
-	developer.GroupList = []*models.UserGroup{
-		{GroupName: "test_group", GroupType: 1, LdapGroupDN: "cn=harbor_user,dc=example,dc=com"},
-	}
-	type fields struct {
-		user *models.User
-		pm   promgr.ProjectManager
-	}
-	type args struct {
-		projectIDOrName interface{}
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   []int
-	}{
-		{"Developer", fields{user: developer, pm: pm}, args{project.ProjectID}, []int{2}},
-		{"Guest", fields{user: guestUser, pm: pm}, args{project.ProjectID}, []int{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &SecurityContext{
-				user: tt.fields.user,
-				pm:   tt.fields.pm,
-			}
-			if got := s.GetRolesByGroup(tt.args.projectIDOrName); !dao.ArrayEqual(got, tt.want) {
-				t.Errorf("SecurityContext.GetRolesByGroup() = %v, want %v", got, tt.want)
-			}
+
+	{
+		// private project, authenticated, system admin
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+
+		ctx := NewSecurityContext(&models.User{
+			Username:     "admin",
+			SysAdminFlag: true,
 		})
+		ctx.ctl = ctl
+		resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPull, resource))
 	}
 }
 
-func TestSecurityContext_GetMyProjects(t *testing.T) {
-	type fields struct {
-		user *models.User
-		pm   promgr.ProjectManager
+func TestHasPushPerm(t *testing.T) {
+	resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+
+	{
+		// unauthenticated
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+
+		ctx := NewSecurityContext(nil)
+		ctx.ctl = ctl
+		assert.False(t, ctx.Can(context.TODO(), rbac.ActionPush, resource))
 	}
-	tests := []struct {
-		name     string
-		fields   fields
-		wantSize int
-		wantErr  bool
-	}{
-		{"Admin", fields{user: projectAdminUser, pm: pm}, 1, false},
+
+	{
+		// authenticated, has read perm
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+		mock.OnAnything(ctl, "ListRoles").Return([]int{common.RoleGuest}, nil)
+
+		ctx := NewSecurityContext(guestUser)
+		ctx.ctl = ctl
+		assert.False(t, ctx.Can(context.TODO(), rbac.ActionPush, resource))
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &SecurityContext{
-				user: tt.fields.user,
-				pm:   tt.fields.pm,
-			}
-			got, err := s.GetMyProjects()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("SecurityContext.GetMyProjects() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if len(got) != tt.wantSize {
-				t.Errorf("SecurityContext.GetMyProjects() = %v, want %v", len(got), tt.wantSize)
-			}
+
+	{
+		// authenticated, has write perm
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+		mock.OnAnything(ctl, "ListRoles").Return([]int{common.RoleDeveloper}, nil)
+
+		ctx := NewSecurityContext(developerUser)
+		ctx.ctl = ctl
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource))
+	}
+
+	{
+		// authenticated, system admin
+		ctl := &projecttesting.Controller{}
+		ctx := NewSecurityContext(&models.User{
+			Username:     "admin",
+			SysAdminFlag: true,
 		})
+		ctx.ctl = ctl
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource))
 	}
+}
+
+func TestHasPushPullPerm(t *testing.T) {
+	resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+
+	{
+		// unauthenticated
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+
+		ctx := NewSecurityContext(nil)
+		ctx.ctl = ctl
+		assert.False(t, ctx.Can(context.TODO(), rbac.ActionPush, resource) && ctx.Can(context.TODO(), rbac.ActionPull, resource))
+	}
+
+	{
+		// authenticated, has all perms
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+		mock.OnAnything(ctl, "ListRoles").Return([]int{common.RoleProjectAdmin}, nil)
+
+		ctx := NewSecurityContext(projectAdminUser)
+		ctx.ctl = ctl
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource) && ctx.Can(context.TODO(), rbac.ActionPull, resource))
+	}
+
+	{
+		// authenticated, system admin
+		ctl := &projecttesting.Controller{}
+		mock.OnAnything(ctl, "Get").Return(private, nil)
+
+		ctx := NewSecurityContext(&models.User{
+			Username:     "admin",
+			SysAdminFlag: true,
+		})
+		ctx.ctl = ctl
+		assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource) && ctx.Can(context.TODO(), rbac.ActionPull, resource))
+	}
+}
+
+func TestSysadminPerms(t *testing.T) {
+	// authenticated, system admin
+	ctl := &projecttesting.Controller{}
+	mock.OnAnything(ctl, "Get").Return(private, nil)
+	mock.OnAnything(ctl, "ListRoles").Return([]int{}, nil)
+
+	ctx := NewSecurityContext(&models.User{
+		Username:     "admin",
+		SysAdminFlag: true,
+	})
+	ctx.ctl = ctl
+	resource := rbac_project.NewNamespace(private.ProjectID).Resource(rbac.ResourceRepository)
+	assert.True(t, ctx.Can(context.TODO(), rbac.ActionPush, resource) && ctx.Can(context.TODO(), rbac.ActionPull, resource))
+	assert.False(t, ctx.Can(context.TODO(), rbac.ActionScannerPull, resource))
+
 }

@@ -19,14 +19,15 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/gocraft/work"
-	"github.com/pkg/errors"
 	"io"
 	"net"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
+
+	"github.com/asaskevich/govalidator"
+	"github.com/gocraft/work"
+
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
 // NodeIDContextKey is used to keep node ID in the system context
@@ -99,45 +100,7 @@ func IsValidURL(address string) bool {
 		return false
 	}
 
-	if _, err := url.Parse(address); err != nil {
-		return false
-	}
-
-	return true
-}
-
-// TranslateRedisAddress translates the comma format to redis URL
-func TranslateRedisAddress(commaFormat string) (string, bool) {
-	if IsEmptyStr(commaFormat) {
-		return "", false
-	}
-
-	sections := strings.Split(commaFormat, ",")
-	totalSections := len(sections)
-	if totalSections == 0 {
-		return "", false
-	}
-
-	urlParts := make([]string, 0)
-	// section[0] should be host:port
-	redisURL := fmt.Sprintf("redis://%s", sections[0])
-	if _, err := url.Parse(redisURL); err != nil {
-		return "", false
-	}
-	urlParts = append(urlParts, "redis://", sections[0])
-	// Ignore weight
-	// Check password
-	if totalSections >= 3 && !IsEmptyStr(sections[2]) {
-		urlParts = []string{urlParts[0], fmt.Sprintf("%s:%s@", "arbitrary_username", sections[2]), urlParts[1]}
-	}
-
-	if totalSections >= 4 && !IsEmptyStr(sections[3]) {
-		if _, err := strconv.Atoi(sections[3]); err == nil {
-			urlParts = append(urlParts, "/", sections[3])
-		}
-	}
-
-	return strings.Join(urlParts, ""), true
+	return govalidator.IsURL(address)
 }
 
 // SerializeJob encodes work.Job to json data.

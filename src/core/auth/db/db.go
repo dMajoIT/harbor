@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,19 +15,24 @@
 package db
 
 import (
-	"github.com/goharbor/harbor/src/common/dao"
+	"context"
+
+	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/core/auth"
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/pkg/user"
 )
 
 // Auth implements Authenticator interface to authenticate user against DB.
 type Auth struct {
 	auth.DefaultAuthenticateHelper
+	userMgr user.Manager
 }
 
 // Authenticate calls dao to authenticate user.
-func (d *Auth) Authenticate(m models.AuthModel) (*models.User, error) {
-	u, err := dao.LoginByDb(m)
+func (d *Auth) Authenticate(ctx context.Context, m models.AuthModel) (*models.User, error) {
+	u, err := d.userMgr.MatchLocalPassword(ctx, m.Principal, m.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -38,19 +43,23 @@ func (d *Auth) Authenticate(m models.AuthModel) (*models.User, error) {
 }
 
 // SearchUser - Check if user exist in local db
-func (d *Auth) SearchUser(username string) (*models.User, error) {
-	var queryCondition = models.User{
-		Username: username,
+func (d *Auth) SearchUser(ctx context.Context, username string) (*models.User, error) {
+	u, err := d.userMgr.GetByName(ctx, username)
+	if errors.IsNotFoundErr(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
 	}
-
-	return dao.GetUser(queryCondition)
+	return u, err
 }
 
 // OnBoardUser -
-func (d *Auth) OnBoardUser(u *models.User) error {
+func (d *Auth) OnBoardUser(ctx context.Context, u *models.User) error {
 	return nil
 }
 
 func init() {
-	auth.Register("db_auth", &Auth{})
+	auth.Register(common.DBAuth, &Auth{
+		userMgr: user.New(),
+	})
 }
