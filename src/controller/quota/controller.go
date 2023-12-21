@@ -59,8 +59,8 @@ var (
 	// quotaExpireTimeout is the expire time for quota when update quota by redis
 	quotaExpireTimeout = time.Minute * 5
 
-	updateQuotaProviderRedis updateQuotaProviderType = "Redis"
-	updateQuotaProviderDB    updateQuotaProviderType = "DB"
+	updateQuotaProviderRedis updateQuotaProviderType = "redis"
+	updateQuotaProviderDB    updateQuotaProviderType = "db"
 )
 
 var (
@@ -262,7 +262,7 @@ func (c *controller) updateUsageByRedis(ctx context.Context, reference, referenc
 		return retry.Abort(ctx.Err())
 	}
 
-	client, err := libredis.GetCoreClient()
+	client, err := libredis.GetHarborClient()
 	if err != nil {
 		return retry.Abort(err)
 	}
@@ -464,7 +464,7 @@ func (c *controller) Update(ctx context.Context, u *quota.Quota) error {
 }
 
 // Driver returns quota driver for the reference
-func Driver(ctx context.Context, reference string) (driver.Driver, error) {
+func Driver(_ context.Context, reference string) (driver.Driver, error) {
 	d, ok := driver.Get(reference)
 	if !ok {
 		return nil, fmt.Errorf("quota not support for %s", reference)

@@ -29,7 +29,7 @@ Select Distribution For P2P Preheat
 
 Select P2P Preheat Policy
     [Arguments]  ${name}
-    Retry Element Click  //clr-dg-row[contains(.,'${name}')]//clr-radio-wrapper/label
+    Retry Element Click  //clr-dg-row[contains(.,'${name}')]//clr-radio-wrapper/label[contains(@class,'clr-control-label')]
 
 P2P Preheat Policy Exist
     [Arguments]  ${name}  ${repo}=${null}
@@ -88,6 +88,7 @@ Delete A P2P Preheat Policy
     [Arguments]  ${name}
     Switch To P2P Preheat
     Retry Double Keywords When Error  Select P2P Preheat Policy  ${name}  Wait Until Element Is Visible  ${p2p_execution_header}
+    Retry Wait Until Page Not Contains Element  //clr-datagrid[contains(.,'ID')]//div//clr-dg-row[1]//clr-dg-cell[2][text()=' Running ']
     Retry Double Keywords When Error  Retry Element Click  ${p2p_preheat_action_btn_id}  Wait Until Element Is Visible And Enabled  ${p2p_preheat_del_btn_id}
     Retry Double Keywords When Error  Retry Element Click  ${p2p_preheat_del_btn_id}  Wait Until Element Is Visible And Enabled  ${delete_confirm_btn}
     Retry Double Keywords When Error  Retry Element Click  ${delete_confirm_btn}  Retry Wait Until Page Not Contains Element  ${delete_confirm_btn}
@@ -138,8 +139,8 @@ Verify Artifact Is Pushed Event
 
 Verify Artifact Is Scanned Event
     [Arguments]  ${project_name}  ${policy_name}  ${image}  ${tag}
-    Go Into Project  ${project_name}
-    Scan Artifact  ${project_name}  ${image}  //clr-dg-row[contains(.,'${tag}')]//label[1]
+    Go Into Repo  ${project_name}  ${image}
+    Scan Repo  ${tag}  Succeed
     Back Project Home  ${project_name}
     Switch To P2P Preheat
     ${contain}  Create List  ${project_name}/${image}:${tag}

@@ -80,12 +80,13 @@
                                 </button>
                                 <clr-dropdown-menu
                                     [hidden]="!selectedRow.length">
-                                    <div class="filter-grid" clrDropdownItem>
+                                    <div class="filter-grid">
                                         <label class="dropdown-header">{{
                                             'REPOSITORY.ADD_LABEL_TO_IMAGE'
                                                 | translate
                                         }}</label>
                                         <app-label-selector
+                                            [usedInDropdown]="true"
                                             [width]="200"
                                             [ownedLabels]="
                                                 selectedRow[0]?.labels
@@ -160,7 +161,7 @@
             </clr-dg-column>
             <clr-dg-column class="co-signed-column">
                 <ng-template [clrDgHideableColumn]="{ hidden: hiddenArray[3] }">
-                    {{ 'ACCESSORY.CO_SIGNED' | translate }}
+                    {{ 'REPOSITORY.SIGNED' | translate }}
                 </ng-template>
             </clr-dg-column>
             <clr-dg-column [clrDgSortBy]="'size'">
@@ -343,16 +344,16 @@
                 </clr-dg-cell>
                 <clr-dg-cell>
                     <span
-                        *ngIf="artifact.coSigned === 'checking'"
+                        *ngIf="artifact.signed === 'checking'"
                         class="spinner spinner-inline ml-2"></span>
                     <clr-icon
                         shape="check-circle"
-                        *ngIf="artifact.coSigned === 'true'"
+                        *ngIf="artifact.signed === 'true'"
                         size="20"
                         class="signed"></clr-icon>
                     <clr-icon
                         shape="times-circle"
-                        *ngIf="artifact.coSigned === 'false'"
+                        *ngIf="artifact.signed === 'false'"
                         size="16"
                         class="color-red"></clr-icon>
                 </clr-dg-cell>
@@ -430,7 +431,8 @@
                         <hbr-label-piece
                             *ngIf="artifact.labels?.length"
                             [label]="artifact.labels[0]"
-                            [labelWidth]="90">
+                            [labelWidth]="90"
+                            [withTooltip]="true">
                         </hbr-label-piece>
                         <div
                             class="signpost-item"
@@ -447,7 +449,8 @@
                                         class="margin-5px">
                                         <hbr-label-piece
                                             [labelWidth]="130"
-                                            [label]="label">
+                                            [label]="label"
+                                            [withTooltip]="true">
                                         </hbr-label-piece>
                                     </div>
                                 </clr-signpost-content>

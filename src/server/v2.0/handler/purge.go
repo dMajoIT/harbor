@@ -141,6 +141,10 @@ func (p *purgeAPI) kick(ctx context.Context, vendorType string, scheType string,
 }
 
 func (p *purgeAPI) updateSchedule(ctx context.Context, vendorType, cronType, cron string, policy pg.JobPolicy, extraParams map[string]interface{}) error {
+	if err := utils.ValidateCronString(cron); err != nil {
+		return errors.New(nil).WithCode(errors.BadRequestCode).
+			WithMessage("invalid cron string for scheduled log rotation purge: %s, error: %v", cron, err)
+	}
 	if err := p.schedulerCtl.Delete(ctx, vendorType); err != nil {
 		return err
 	}
@@ -252,7 +256,7 @@ func (p *purgeAPI) GetPurgeJobLog(ctx context.Context, params purge.GetPurgeJobL
 	return purge.NewGetPurgeJobLogOK().WithPayload(string(taskLog))
 }
 
-func (p *purgeAPI) GetPurgeSchedule(ctx context.Context, params purge.GetPurgeScheduleParams) middleware.Responder {
+func (p *purgeAPI) GetPurgeSchedule(ctx context.Context, _ purge.GetPurgeScheduleParams) middleware.Responder {
 	if err := p.RequireSystemAccess(ctx, rbac.ActionRead, rbac.ResourcePurgeAuditLog); err != nil {
 		return p.SendError(ctx, err)
 	}
@@ -315,10 +319,6 @@ func verifyUpdateRequest(params purge.UpdatePurgeScheduleParams) error {
 }
 
 func (p *purgeAPI) createSchedule(ctx context.Context, vendorType string, cronType string, cron string, policy pg.JobPolicy, extraParam map[string]interface{}) error {
-	if cron == "" {
-		return errors.New(nil).WithCode(errors.BadRequestCode).
-			WithMessage("empty cron string for schedule")
-	}
 	_, err := p.schedulerCtl.Create(ctx, vendorType, cronType, cron, pg.SchedulerCallback, policy, extraParam)
 	if err != nil {
 		return err

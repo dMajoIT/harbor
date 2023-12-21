@@ -28,6 +28,7 @@ type Execution struct {
 	StatusMessage string
 	Metrics       *dao.Metrics
 	Trigger       string
+	Operator      string
 	StartTime     time.Time
 	EndTime       time.Time
 }
@@ -42,6 +43,7 @@ type Task struct {
 	ResourceType        string
 	SourceResource      string
 	DestinationResource string
+	References          string
 	Operation           string
 	JobID               string
 	CreationTime        time.Time

@@ -24,6 +24,8 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/secret"
+	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/controller/scanner"
 	"github.com/goharbor/harbor/src/jobservice/job"
@@ -56,12 +58,12 @@ type scanAllAPI struct {
 	makeCtx    func() context.Context
 }
 
-func (s *scanAllAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (s *scanAllAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
 	return nil
 }
 
 // StopScanAll stops the execution of scan all artifacts.
-func (s *scanAllAPI) StopScanAll(ctx context.Context, params operation.StopScanAllParams) middleware.Responder {
+func (s *scanAllAPI) StopScanAll(ctx context.Context, _ operation.StopScanAllParams) middleware.Responder {
 	if err := s.requireAccess(ctx, rbac.ActionStop); err != nil {
 		return s.SendError(ctx, err)
 	}
@@ -156,7 +158,7 @@ func (s *scanAllAPI) UpdateScanAllSchedule(ctx context.Context, params operation
 	return operation.NewUpdateScanAllScheduleOK()
 }
 
-func (s *scanAllAPI) GetScanAllSchedule(ctx context.Context, params operation.GetScanAllScheduleParams) middleware.Responder {
+func (s *scanAllAPI) GetScanAllSchedule(ctx context.Context, _ operation.GetScanAllScheduleParams) middleware.Responder {
 	if err := s.requireAccess(ctx, rbac.ActionRead); err != nil {
 		return s.SendError(ctx, err)
 	}
@@ -168,7 +170,7 @@ func (s *scanAllAPI) GetScanAllSchedule(ctx context.Context, params operation.Ge
 	return operation.NewGetScanAllScheduleOK().WithPayload(model.NewSchedule(schedule).ToSwagger())
 }
 
-func (s *scanAllAPI) GetLatestScanAllMetrics(ctx context.Context, params operation.GetLatestScanAllMetricsParams) middleware.Responder {
+func (s *scanAllAPI) GetLatestScanAllMetrics(ctx context.Context, _ operation.GetLatestScanAllMetricsParams) middleware.Responder {
 	if err := s.requireAccess(ctx, rbac.ActionRead); err != nil {
 		return s.SendError(ctx, err)
 	}
@@ -180,7 +182,7 @@ func (s *scanAllAPI) GetLatestScanAllMetrics(ctx context.Context, params operati
 	return operation.NewGetLatestScanAllMetricsOK().WithPayload(stats)
 }
 
-func (s *scanAllAPI) GetLatestScheduledScanAllMetrics(ctx context.Context, params operation.GetLatestScheduledScanAllMetricsParams) middleware.Responder {
+func (s *scanAllAPI) GetLatestScheduledScanAllMetrics(ctx context.Context, _ operation.GetLatestScheduledScanAllMetricsParams) middleware.Responder {
 	if err := s.requireAccess(ctx, rbac.ActionRead); err != nil {
 		return s.SendError(ctx, err)
 	}
@@ -193,6 +195,10 @@ func (s *scanAllAPI) GetLatestScheduledScanAllMetrics(ctx context.Context, param
 }
 
 func (s *scanAllAPI) createOrUpdateScanAllSchedule(ctx context.Context, cronType, cron string, previous *scheduler.Schedule) (int64, error) {
+	if err := utils.ValidateCronString(cron); err != nil {
+		return 0, errors.New(nil).WithCode(errors.BadRequestCode).
+			WithMessage("invalid cron string for scheduled scan all: %s, error: %v", cron, err)
+	}
 	if previous != nil {
 		if cronType == previous.CRONType && cron == previous.CRON {
 			return previous.ID, nil
@@ -203,7 +209,11 @@ func (s *scanAllAPI) createOrUpdateScanAllSchedule(ctx context.Context, cronType
 		}
 	}
 
-	return s.scheduler.Schedule(ctx, job.ScanAllVendorType, 0, cronType, cron, scan.ScanAllCallback, nil, nil)
+	cbParams := map[string]interface{}{
+		// the operator of schedule job is harbor-jobservice
+		"operator": secret.JobserviceUser,
+	}
+	return s.scheduler.Schedule(ctx, job.ScanAllVendorType, 0, cronType, cron, scan.ScanAllCallback, cbParams, nil)
 }
 
 func (s *scanAllAPI) getScanAllSchedule(ctx context.Context) (*scheduler.Schedule, error) {

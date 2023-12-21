@@ -34,10 +34,16 @@ type Manager interface {
 	Summary(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) (*model.Summary, error)
 	// DangerousArtifacts returns the most dangerous artifact for the given scanner.
 	DangerousArtifacts(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) ([]*model.DangerousArtifact, error)
+	// TotalArtifactsCount return the count of artifacts.
+	TotalArtifactsCount(ctx context.Context, projectID int64) (int64, error)
 	// ScannedArtifactsCount return the count of scanned artifacts.
 	ScannedArtifactsCount(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) (int64, error)
 	// DangerousCVEs returns the most dangerous CVEs for the given scanner.
 	DangerousCVEs(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) ([]*scan.VulnerabilityRecord, error)
+	// TotalVuls return the count of vulnerabilities
+	TotalVuls(ctx context.Context, scannerUUID string, projectID int64, tuneCount bool, query *q.Query) (int64, error)
+	// ListVuls returns vulnerabilities list
+	ListVuls(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) ([]*model.VulnerabilityItem, error)
 }
 
 // NewManager news security manager.
@@ -50,6 +56,10 @@ func NewManager() Manager {
 // securityManager is a default implementation of security manager.
 type securityManager struct {
 	dao dao.SecurityHubDao
+}
+
+func (s *securityManager) TotalArtifactsCount(ctx context.Context, projectID int64) (int64, error) {
+	return s.dao.TotalArtifactsCount(ctx, projectID)
 }
 
 func (s *securityManager) Summary(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) (*model.Summary, error) {
@@ -66,4 +76,12 @@ func (s *securityManager) ScannedArtifactsCount(ctx context.Context, scannerUUID
 
 func (s *securityManager) DangerousCVEs(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) ([]*scan.VulnerabilityRecord, error) {
 	return s.dao.DangerousCVEs(ctx, scannerUUID, projectID, query)
+}
+
+func (s *securityManager) TotalVuls(ctx context.Context, scannerUUID string, projectID int64, tuneCount bool, query *q.Query) (int64, error) {
+	return s.dao.CountVulnerabilities(ctx, scannerUUID, projectID, tuneCount, query)
+}
+
+func (s *securityManager) ListVuls(ctx context.Context, scannerUUID string, projectID int64, query *q.Query) ([]*model.VulnerabilityItem, error) {
+	return s.dao.ListVulnerabilities(ctx, scannerUUID, projectID, query)
 }

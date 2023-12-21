@@ -151,7 +151,7 @@ func constructReplicationPayload(ctx context.Context, event *event.ReplicationEv
 	payload := &model.Payload{
 		Type:     event.EventType,
 		OccurAt:  event.OccurAt.Unix(),
-		Operator: string(execution.Trigger),
+		Operator: execution.Operator,
 		EventData: &model.EventData{
 			Replication: &ctlModel.Replication{
 				HarborHostname:     hostname,
@@ -191,6 +191,7 @@ func constructReplicationPayload(ctx context.Context, event *event.ReplicationEv
 			Type:       task.ResourceType,
 			Status:     task.Status,
 			NameAndTag: nameAndTag,
+			References: strings.Split(task.References, ","),
 		}
 		payload.EventData.Replication.SuccessfulArtifact = []*ctlModel.ArtifactInfo{succeedArtifact}
 	}
@@ -199,6 +200,7 @@ func constructReplicationPayload(ctx context.Context, event *event.ReplicationEv
 			Type:       task.ResourceType,
 			Status:     task.Status,
 			NameAndTag: nameAndTag,
+			References: strings.Split(task.References, ","),
 		}
 		payload.EventData.Replication.FailedArtifact = []*ctlModel.ArtifactInfo{failedArtifact}
 	}

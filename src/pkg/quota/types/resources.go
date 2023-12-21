@@ -25,6 +25,10 @@ const (
 	// UNLIMITED unlimited resource value
 	UNLIMITED = -1
 
+	// MaxLimitedValue the max capacity of limited storage, in Bytes
+	// 1125899906842624 Bytes = 1024 TB
+	MaxLimitedValue = uint64(1125899906842624)
+
 	// ResourceStorage storage size, in bytes
 	ResourceStorage ResourceName = "storage"
 )
@@ -46,7 +50,7 @@ func (resource ResourceName) FormatValue(value int64) string {
 type ResourceList map[ResourceName]int64
 
 // Validate validates this resource list
-func (resources ResourceList) Validate(formats strfmt.Registry) error {
+func (resources ResourceList) Validate(_ strfmt.Registry) error {
 	return nil
 }
 

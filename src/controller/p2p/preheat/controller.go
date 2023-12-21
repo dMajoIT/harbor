@@ -294,6 +294,12 @@ func (c *controller) CreatePolicy(ctx context.Context, schema *policyModels.Sche
 		return 0, err
 	}
 
+	// valid policy schema
+	err = schema.ValidatePreheatPolicy()
+	if err != nil {
+		return 0, err
+	}
+
 	id, err = c.pManager.Create(ctx, schema)
 	if err != nil {
 		return
@@ -356,6 +362,12 @@ func (c *controller) UpdatePolicy(ctx context.Context, schema *policyModels.Sche
 
 	// Get full model of updating policy
 	err = schema.Decode()
+	if err != nil {
+		return err
+	}
+
+	// valid policy schema
+	err = schema.ValidatePreheatPolicy()
 	if err != nil {
 		return err
 	}
@@ -483,7 +495,7 @@ func (c *controller) ListPoliciesByProject(ctx context.Context, project int64, q
 }
 
 // CheckHealth checks the instance health, for test connection
-func (c *controller) CheckHealth(ctx context.Context, instance *providerModels.Instance) error {
+func (c *controller) CheckHealth(_ context.Context, instance *providerModels.Instance) error {
 	if instance == nil {
 		return errors.New("instance can not be nil")
 	}

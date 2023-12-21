@@ -18,10 +18,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/config/metadata"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -134,7 +136,7 @@ func (c *CfgManager) Save(ctx context.Context) error {
 }
 
 // Get ...
-func (c *CfgManager) Get(ctx context.Context, key string) *metadata.ConfigureValue {
+func (c *CfgManager) Get(_ context.Context, key string) *metadata.ConfigureValue {
 	configValue, err := c.Store.Get(key)
 	if err != nil {
 		log.Debugf("failed to get key %v, error: %v, maybe default value not defined before get", key, err)
@@ -144,7 +146,7 @@ func (c *CfgManager) Get(ctx context.Context, key string) *metadata.ConfigureVal
 }
 
 // Set ...
-func (c *CfgManager) Set(ctx context.Context, key string, value interface{}) {
+func (c *CfgManager) Set(_ context.Context, key string, value interface{}) {
 	configValue, err := metadata.NewCfgValue(key, utils.GetStrValueOfAnyType(value))
 	if err != nil {
 		log.Errorf("error when setting key: %v,  error %v", key, err)
@@ -188,7 +190,21 @@ func (c *CfgManager) ValidateCfg(ctx context.Context, cfgs map[string]interface{
 		if item.Scope == metadata.SystemScope {
 			return fmt.Errorf("system config items cannot be updated, item: %v", key)
 		}
+
 		strVal := utils.GetStrValueOfAnyType(value)
+
+		// check storage per project before setting it
+		if key == common.StoragePerProject {
+			storagePerProject, err := strconv.ParseInt(strVal, 10, 64)
+			if err != nil {
+				return fmt.Errorf("cannot parse string value(%v) to int64", strVal)
+			}
+
+			if err := lib.ValidateQuotaLimit(storagePerProject); err != nil {
+				return err
+			}
+		}
+
 		_, err := metadata.NewCfgValue(key, strVal)
 		if err != nil {
 			return errors.Wrap(err, "item name "+key)

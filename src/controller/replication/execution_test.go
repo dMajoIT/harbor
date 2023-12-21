@@ -73,7 +73,7 @@ func (r *replicationTestSuite) TestStart() {
 	r.Require().NotNil(err)
 
 	// got error when running the replication flow
-	r.execMgr.On("Create", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
+	r.execMgr.On("Create", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
 	r.execMgr.On("Get", mock.Anything, mock.Anything).Return(&task.Execution{}, nil)
 	r.execMgr.On("StopAndWait", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	r.execMgr.On("MarkError", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -91,7 +91,7 @@ func (r *replicationTestSuite) TestStart() {
 	r.SetupTest()
 
 	// got no error when running the replication flow
-	r.execMgr.On("Create", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
+	r.execMgr.On("Create", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
 	r.execMgr.On("Get", mock.Anything, mock.Anything).Return(&task.Execution{}, nil)
 	r.flowCtl.On("Start", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	r.ormCreator.On("Create").Return(nil)
@@ -199,6 +199,7 @@ func (r *replicationTestSuite) TestListTasks() {
 				"resource_type":        "artifact",
 				"source_resource":      "library/hello-world",
 				"destination_resource": "library/hello-world",
+				"references":           "v1,v2,v3",
 				"operation":            "copy",
 			},
 		},
@@ -211,6 +212,7 @@ func (r *replicationTestSuite) TestListTasks() {
 	r.Equal("artifact", tasks[0].ResourceType)
 	r.Equal("library/hello-world", tasks[0].SourceResource)
 	r.Equal("library/hello-world", tasks[0].DestinationResource)
+	r.Equal("v1,v2,v3", tasks[0].References)
 	r.Equal("copy", tasks[0].Operation)
 	r.taskMgr.AssertExpectations(r.T())
 }
@@ -225,6 +227,7 @@ func (r *replicationTestSuite) TestGetTask() {
 				"resource_type":        "artifact",
 				"source_resource":      "library/hello-world",
 				"destination_resource": "library/hello-world",
+				"references":           "v1,v2,v3",
 				"operation":            "copy",
 			},
 		},
@@ -236,6 +239,7 @@ func (r *replicationTestSuite) TestGetTask() {
 	r.Equal("artifact", task.ResourceType)
 	r.Equal("library/hello-world", task.SourceResource)
 	r.Equal("library/hello-world", task.DestinationResource)
+	r.Equal("v1,v2,v3", task.References)
 	r.Equal("copy", task.Operation)
 	r.taskMgr.AssertExpectations(r.T())
 }

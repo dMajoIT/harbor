@@ -24,6 +24,7 @@ import (
 	"github.com/go-openapi/runtime/middleware"
 
 	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/gc"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/config"
@@ -46,7 +47,7 @@ func newGCAPI() *gcAPI {
 	}
 }
 
-func (g *gcAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (g *gcAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
 	return nil
 }
 
@@ -139,10 +140,6 @@ func (g *gcAPI) kick(ctx context.Context, scheType string, cron string, paramete
 }
 
 func (g *gcAPI) createSchedule(ctx context.Context, cronType, cron string, policy gc.Policy) error {
-	if cron == "" {
-		return errors.New(nil).WithCode(errors.BadRequestCode).
-			WithMessage("empty cron string for gc schedule")
-	}
 	_, err := g.gcCtr.CreateSchedule(ctx, cronType, cron, policy)
 	if err != nil {
 		return err
@@ -151,13 +148,17 @@ func (g *gcAPI) createSchedule(ctx context.Context, cronType, cron string, polic
 }
 
 func (g *gcAPI) updateSchedule(ctx context.Context, cronType, cron string, policy gc.Policy) error {
+	if err := utils.ValidateCronString(cron); err != nil {
+		return errors.New(nil).WithCode(errors.BadRequestCode).
+			WithMessage("invalid cron string for scheduled gc: %s, error: %v", cron, err)
+	}
 	if err := g.gcCtr.DeleteSchedule(ctx); err != nil {
 		return err
 	}
 	return g.createSchedule(ctx, cronType, cron, policy)
 }
 
-func (g *gcAPI) GetGCSchedule(ctx context.Context, params operation.GetGCScheduleParams) middleware.Responder {
+func (g *gcAPI) GetGCSchedule(ctx context.Context, _ operation.GetGCScheduleParams) middleware.Responder {
 	if err := g.RequireSystemAccess(ctx, rbac.ActionRead, rbac.ResourceGarbageCollection); err != nil {
 		return g.SendError(ctx, err)
 	}
